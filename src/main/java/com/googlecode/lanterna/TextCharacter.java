@@ -392,6 +392,7 @@ public class TextCharacter implements Serializable {
     public boolean isDoubleWidth() {
         // TODO: make this better to work properly with emoji and other complicated "characters"
         return TerminalTextUtils.isCharDoubleWidth(character.charAt(0)) ||
+                isCharEmojiPresentation(character.charAt(0)) ||
                 isEmoji(character) ||
                 // If the character takes up more than one char, assume it's double width (unless thai)
                 (character.length() > 1 && !TerminalTextUtils.isCharThai(character.charAt(0)));
@@ -407,6 +408,70 @@ public class TextCharacter implements Serializable {
                         TerminalTextUtils.isCharThai(firstCharacter) ||
                         TerminalTextUtils.isCharCJK(firstCharacter) ||
                         TerminalTextUtils.isControlCharacter(firstCharacter));
+    }
+
+    /**
+     * BMP code points whose Unicode property `Emoji_Presentation=Yes` &mdash;
+     * i.e. the character defaults to emoji presentation in modern terminals
+     * and should be allocated TWO terminal columns. Without this check,
+     * single-`char` BMP emoji like ✅ (U+2705 WHITE HEAVY CHECK MARK),
+     * ⭐ (U+2B50 WHITE MEDIUM STAR), or ⚡ (U+26A1 HIGH VOLTAGE) fall
+     * through `isEmoji` (which only catches multi-`char` graphemes) AND
+     * through `isCharCJK` (they're in Misc Symbols / Dingbats blocks, not
+     * CJK), so {@code isDoubleWidth()} returned {@code false} and the
+     * grid math under-counted them by one column. Visible symptom in any
+     * markdown table that contained ✅ etc.: every cell after the emoji
+     * shifted left by one column, the closing `┃` overdrew cell text,
+     * and the row read as broken.
+     *
+     * The list mirrors Unicode 15.1's `emoji-data.txt` filtered to BMP
+     * code points with `Emoji_Presentation=Yes`. Code points with
+     * `Emoji=Yes` but `Emoji_Presentation=No` (❤ U+2764 HEAVY BLACK HEART,
+     * ☀ U+2600 BLACK SUN WITH RAYS, etc.) are intentionally NOT included
+     * here &mdash; they default to text presentation (one column) and
+     * become wide only when followed by VS-16 (U+FE0F), which lanterna
+     * already handles via the `character.length() &gt; 1` branch above.
+     *
+     * Range bounds checked first to keep the common path (ASCII / CJK /
+     * non-emoji symbols) at one comparison and one branch.
+     */
+    private static boolean isCharEmojiPresentation(char c) {
+        if (c < 0x231A || c > 0x2B55) {
+            return false;
+        }
+        return (c >= 0x231A && c <= 0x231B)        // ⌚..⌛ watch, hourglass done
+                || (c >= 0x23E9 && c <= 0x23EC)    // ⏩..⏬ fast-forward..fast down
+                || (c == 0x23F0)                   // ⏰ alarm clock
+                || (c == 0x23F3)                   // ⏳ hourglass not done
+                || (c >= 0x25FD && c <= 0x25FE)    // ◽..◾ medium-small white/black square
+                || (c >= 0x2614 && c <= 0x2615)    // ☔..☕ umbrella with rain, hot beverage
+                || (c >= 0x2648 && c <= 0x2653)    // ♈..♓ zodiac signs Aries..Pisces
+                || (c == 0x267F)                   // ♿ wheelchair symbol
+                || (c == 0x2693)                   // ⚓ anchor
+                || (c == 0x26A1)                   // ⚡ high voltage
+                || (c >= 0x26AA && c <= 0x26AB)    // ⚪..⚫ white/black circle
+                || (c >= 0x26BD && c <= 0x26BE)    // ⚽..⚾ soccer ball, baseball
+                || (c >= 0x26C4 && c <= 0x26C5)    // ⛄..⛅ snowman, sun behind cloud
+                || (c == 0x26CE)                   // ⛎ Ophiuchus
+                || (c == 0x26D4)                   // ⛔ no entry
+                || (c == 0x26EA)                   // ⛪ church
+                || (c >= 0x26F2 && c <= 0x26F3)    // ⛲..⛳ fountain, flag in hole
+                || (c == 0x26F5)                   // ⛵ sailboat
+                || (c == 0x26FA)                   // ⛺ tent
+                || (c == 0x26FD)                   // ⛽ fuel pump
+                || (c == 0x2705)                   // ✅ check mark button
+                || (c >= 0x270A && c <= 0x270B)    // ✊..✋ raised fist, raised hand
+                || (c == 0x2728)                   // ✨ sparkles
+                || (c == 0x274C)                   // ❌ cross mark
+                || (c == 0x274E)                   // ❎ cross mark button
+                || (c >= 0x2753 && c <= 0x2755)    // ❓..❕ question, exclamation marks
+                || (c == 0x2757)                   // ❗ heavy exclamation
+                || (c >= 0x2795 && c <= 0x2797)    // ➕..➗ heavy plus, minus, division
+                || (c == 0x27B0)                   // ➰ curly loop
+                || (c == 0x27BF)                   // ➿ double curly loop
+                || (c >= 0x2B1B && c <= 0x2B1C)    // ⬛..⬜ large black/white square
+                || (c == 0x2B50)                   // ⭐ white medium star
+                || (c == 0x2B55);                  // ⭕ hollow red circle
     }
 
     @SuppressWarnings("SimplifiableIfStatement")

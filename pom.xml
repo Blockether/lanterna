@@ -4,8 +4,8 @@
     <artifactId>lanterna</artifactId>
     <packaging>jar</packaging>
     <name>Lanterna (Blockether vis fork)</name>
-    <description>Patched build of mabe02/lanterna 3.1.5 with PR #625 (emoji rendering in StreamBasedTerminal/AbstractTextGraphics) cherry-picked. Drop-in replacement for com.googlecode.lanterna:lanterna:3.1.5 — same packages, same classes. Will be retired when upstream cuts a release containing #625.</description>
-    <version>3.1.5-vis.1</version>
+    <description>Patched build of mabe02/lanterna 3.1.5 with PR #625 (emoji rendering in StreamBasedTerminal/AbstractTextGraphics) cherry-picked, plus a Blockether-original fix for BMP emoji-presentation width detection (✅, ⭐, ⚡, etc. now correctly counted as two terminal columns). Drop-in replacement for com.googlecode.lanterna:lanterna:3.1.5 — same packages, same classes. Will be retired when upstream ships an equivalent fix.</description>
+    <version>3.1.5-vis.2</version>
     <url>https://github.com/Blockether/lanterna</url>
 
     <licenses>
