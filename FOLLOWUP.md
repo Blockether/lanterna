@@ -11,9 +11,10 @@
 | Upstream baseline | `lanterna-3.1.5` (mabe02/lanterna, Mar 2026) |
 | Branch | `vis/3.1.5` |
 | Tag | `vis-3.1.5` |
-| Maven GAV | `com.blockether:lanterna:3.1.5-vis.1` |
-| Distribution | Clojars (`https://repo.clojars.org/com/blockether/lanterna/3.1.5-vis.1/`) |
-| Cherry-picked from upstream master | **PR #625 only** (2 commits) |
+| Maven GAV | `com.blockether:lanterna:3.1.5-vis.2` |
+| Distribution | Clojars (`https://repo.clojars.org/com/blockether/lanterna/3.1.5-vis.2/`) |
+| Cherry-picked from upstream master | **PR #625** (2 commits) |
+| Blockether-original patches | **BMP `Emoji_Presentation=Yes` width fix** (1 commit) |
 | Consumer | `vis-tui` (`packages/vis-tui/deps.edn` in the `vis` monorepo) |
 | Retirement trigger | First upstream lanterna release that contains PR #625 (likely 3.1.6 or 3.2.0). |
 
@@ -56,26 +57,67 @@ wait for 3.1.6.
 
 ## What's actually in `vis/3.1.5`
 
-Two cherry-picks on top of the `lanterna-3.1.5` tag, plus a build
-metadata commit. Nothing else — no other patches, no behavioural
-drift, no opportunistic clean-ups.
+Two cherry-picks on top of the `lanterna-3.1.5` tag, one Blockether-
+original fix, plus a build metadata commit. Nothing else — no other
+patches, no behavioural drift, no opportunistic clean-ups.
 
 ```
 $ git log --oneline lanterna-3.1.5..vis-3.1.5
+7fb5bdda fix: BMP emoji-presentation detection in TextCharacter.isDoubleWidth
 0ec5be77 build: rename GAV to com.blockether:lanterna:3.1.5-vis.1
 e4b1868e fix: if terminal supports UTF-8, then directly encode the string as a whole
 b92c9afe fix: use `TextCharacter.fromString` to process double width characters like emojis
 ```
 
-The two `fix:` commits are bit-identical cherry-picks of upstream
+The two upstream `fix:` commits are bit-identical cherry-picks of
 `a2b96159` and `c18e9ae4` (the body of mabe02/lanterna PR #625
-authored by @mcarleio). The third commit is the only original work
-in the fork: the `pom.xml` rewrite that flips groupId, artifactId
-metadata, and version so the artifact can live on Clojars without
-shadowing the official `com.googlecode.lanterna:lanterna` coord.
-The Java packages, class names, and public API are **unchanged** —
-this is a drop-in replacement, callers swap a Maven coordinate, no
-imports move.
+authored by @mcarleio). The `build:` commit flips groupId / artifact
+metadata for Clojars distribution. The Blockether-original `fix:`
+commit (7fb5bdda) is described in the new section below. The Java
+packages, class names, and public API are **unchanged** — this is a
+drop-in replacement, callers swap a Maven coordinate, no imports move.
+
+### The Blockether-original BMP-emoji-presentation fix (7fb5bdda)
+
+`TextCharacter.isDoubleWidth()` upstream uses three heuristics in OR:
+`isCharDoubleWidth` (CJK), `isEmoji` (anything not-printable / not-CJK
+/ not-thai), and `length > 1` (multi-`char` graphemes catches
+surrogate-pair SMP emoji + variation-selector sequences).
+
+This combination misses **single-`char` BMP code points whose Unicode
+property is `Emoji_Presentation=Yes`** — chars like
+
+    ✅ U+2705 white heavy check mark
+    ⭐ U+2B50 white medium star
+    ⚡ U+26A1 high voltage
+    ❌ U+274C cross mark
+    ✨ U+2728 sparkles
+    ☔ U+2614 umbrella with rain
+    ☕ U+2615 hot beverage
+    ⏰ U+23F0 alarm clock
+
+They live in the Misc Symbols (`U+2600…U+26FF`) and Dingbats
+(`U+2700…U+27BF`) blocks — not CJK — and as single BMP `char`s they
+pass `isPrintableCharacter`, so `isEmoji` returns false. Result:
+`isDoubleWidth = false`, lanterna's `putString` advances the cursor
+by ONE column when painting them, the table grid drifts one column
+left on every row that uses such an emoji, and the closing `┃`
+separator gets overdrawn by cell content.
+
+The new helper `isCharEmojiPresentation(char)` is a hand-rolled range
+check against Unicode 15.1's `emoji-data.txt` filtered to BMP code
+points with `Emoji_Presentation=Yes` — ~30 ranges, ~100 code points,
+one early-exit range bound for the common path.
+
+Explicitly NOT included: `Emoji=Yes` but `Emoji_Presentation=No`
+chars like `❤` (U+2764 heavy black heart), `☀` (U+2600 black sun
+with rays), `☂` (U+2602 umbrella). Those default to TEXT presentation
+(one column) per Unicode and become wide only when followed by VS-16
+(`U+FE0F`); the existing `length > 1` branch already handles that path.
+
+Blockether-original because no upstream PR exists for this fix as of
+2026-04-27. Worth submitting; the patch is small, well-scoped, and
+benefits every lanterna consumer that renders emoji.
 
 ## What was deliberately NOT pulled
 
@@ -185,7 +227,7 @@ git checkout vis/3.1.5
 
 # Build (needs JDK 8+ — the pom targets 1.8 bytecode regardless of build JDK)
 mvn -DskipTests -Dgpg.skip -Dmaven.javadoc.skip=true clean package
-ls target/lanterna-3.1.5-vis.1.jar    # the jar
+ls target/lanterna-3.1.5-vis.2.jar    # the jar
 
 # Deploy to Clojars (needs CLOJARS_USERNAME + CLOJARS_PASSWORD env vars;
 # password = the deploy token under your Clojars account)
@@ -197,11 +239,15 @@ clojure -Sdeps '{:deps {slipset/deps-deploy {:mvn/version "0.2.3"}}}' \
 
 Bumping the patch version (e.g., to add another upstream cherry-pick):
 
-1. Cherry-pick the additional commit(s) onto `vis/3.1.5`.
-2. Edit `pom.xml`: `<version>3.1.5-vis.2</version>` (and the `<scm>/<tag>`).
-3. Update `deploy_to_clojars.clj` (it pins the jar filename — change `vis.1` → `vis.2`).
-4. Move tag: `git tag -fa vis-3.1.5 -m '...'` then `git push --force origin refs/tags/vis-3.1.5`.
-5. Build, deploy, then bump `packages/vis-tui/deps.edn` in the `vis` repo to `3.1.5-vis.2`.
+1. Cherry-pick the additional commit(s) onto `vis/3.1.5` (or write a
+   new Blockether-original commit and add a section to this FOLLOWUP).
+2. Edit `pom.xml`: bump `<version>3.1.5-vis.N</version>`.
+3. Update `deploy_to_clojars.clj` (it pins the jar filename — change
+   `vis.N-1` → `vis.N`).
+4. Move tag: `git tag -fa vis-3.1.5 -m '...'` then
+   `git push --force origin refs/tags/vis-3.1.5`.
+5. Build, deploy, then bump `packages/vis-tui/deps.edn` in the `vis`
+   repo to `3.1.5-vis.N`.
 6. Update this `FOLLOWUP.md` table at the top.
 
 ## Retirement plan
