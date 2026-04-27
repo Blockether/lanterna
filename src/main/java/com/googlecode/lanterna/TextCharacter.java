@@ -391,11 +391,49 @@ public class TextCharacter implements Serializable {
 
     public boolean isDoubleWidth() {
         // TODO: make this better to work properly with emoji and other complicated "characters"
+        //
+        // Variation Selector-16 (U+FE0F) graphemes are deliberately
+        // treated as NOT double-width. Real-world terminals (macOS
+        // Terminal, iTerm2 with several common monospaced fonts, and
+        // others) render emoji+VS-16 sequences at the BASE character's
+        // text-presentation width — typically one column — NOT the
+        // two-column emoji-presentation width that Unicode says VS-16
+        // is supposed to force. Returning true here causes lanterna's
+        // putString to advance the cursor by two cells while the
+        // terminal only advances by one, which leaves a one-cell gap
+        // and shifts every following character left by one. Symptom:
+        // markdown table rows containing 🏷️ (LABEL + VS-16) drift the
+        // grid one column right of the emoji. Treating these graphemes
+        // as single-width keeps lanterna's cursor model in lockstep
+        // with what the terminal actually paints — the user-visible
+        // bug, fixed at the source.
+        if (containsVariationSelector16(character)) {
+            return false;
+        }
         return TerminalTextUtils.isCharDoubleWidth(character.charAt(0)) ||
                 isCharEmojiPresentation(character.charAt(0)) ||
                 isEmoji(character) ||
                 // If the character takes up more than one char, assume it's double width (unless thai)
                 (character.length() > 1 && !TerminalTextUtils.isCharThai(character.charAt(0)));
+    }
+
+    /**
+     * True when {@code s} contains the Variation Selector-16 (U+FE0F)
+     * codepoint. Tiny scan; called once per {@link #isDoubleWidth()}
+     * invocation and only matters for graphemes longer than one
+     * {@code char}, where the cost is negligible compared to the
+     * surrounding emoji handling.
+     */
+    private static boolean containsVariationSelector16(String s) {
+        if (s.length() < 2) {
+            return false;
+        }
+        for (int i = 0; i < s.length(); i++) {
+            if (s.charAt(i) == '\uFE0F') {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isEmoji(final String s) {
