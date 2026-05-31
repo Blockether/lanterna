@@ -4,8 +4,8 @@
     <artifactId>lanterna</artifactId>
     <packaging>jar</packaging>
     <name>Lanterna (Blockether vis fork)</name>
-    <description>Patched build of mabe02/lanterna 3.1.5 with PR #625 (emoji rendering in StreamBasedTerminal/AbstractTextGraphics) cherry-picked, plus Blockether-original fixes for BMP emoji-presentation width detection (✅, ⭐, ⚡, etc. counted as two terminal columns) and VS-16 grapheme width (🏷️, ❤️, etc. treated as text-presentation single-column to match real terminal rendering). Drop-in replacement for com.googlecode.lanterna:lanterna:3.1.5 — same packages, same classes. Will be retired when upstream ships equivalent fixes.</description>
-    <version>3.1.5-vis.3</version>
+    <description>Patched build of mabe02/lanterna 3.1.5 with PR #625 (emoji rendering in StreamBasedTerminal/AbstractTextGraphics) cherry-picked, plus Blockether-original fixes for BMP emoji-presentation width detection (✅, ⭐, ⚡, etc. counted as two terminal columns), VS-15 text-presentation width, VS-16 terminal width overrides (☑️/🏷️/❤️ narrow by default), and East-Asian-Ambiguous (EAW=A) width: curated text punctuation/letters (·, —, …, λ, quotes, ™, Greek, Cyrillic) counted as two columns to match ambiguous-wide target terminals, while structural chrome (box drawing, blocks, shapes, arrows) stays single-column. Drop-in replacement for com.googlecode.lanterna:lanterna:3.1.5 — same packages, same classes. Will be retired when upstream ships equivalent fixes.</description>
+    <version>3.1.5-vis.6</version>
     <url>https://github.com/Blockether/lanterna</url>
 
     <licenses>

@@ -10,7 +10,7 @@
 ;;     -M deploy_to_clojars.clj
 (require '[deps-deploy.deps-deploy :as dd])
 
-(let [jar     "target/lanterna-3.1.5-vis.3.jar"
+(let [jar     "target/lanterna-3.1.5-vis.6.jar"
       pom     "pom.xml"
       user    (System/getenv "CLOJARS_USERNAME")
       pass    (System/getenv "CLOJARS_PASSWORD")]
@@ -18,7 +18,7 @@
     (binding [*out* *err*]
       (println "ERROR: CLOJARS_USERNAME and CLOJARS_PASSWORD must be set."))
     (System/exit 1))
-  (println "Deploying" jar "as com.blockether/lanterna 3.1.5-vis.3 to Clojars ...")
+  (println "Deploying" jar "as com.blockether/lanterna 3.1.5-vis.6 to Clojars ...")
   (dd/deploy {:installer       :remote
               :artifact        jar
               :pom-file        pom

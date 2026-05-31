@@ -22,6 +22,7 @@ import java.io.Serializable;
 import java.text.BreakIterator;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.BitSet;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.List;
@@ -392,23 +393,33 @@ public class TextCharacter implements Serializable {
     public boolean isDoubleWidth() {
         // TODO: make this better to work properly with emoji and other complicated "characters"
         //
-        // Variation Selector-16 (U+FE0F) graphemes are deliberately
-        // treated as NOT double-width. Real-world terminals (macOS
-        // Terminal, iTerm2 with several common monospaced fonts, and
-        // others) render emoji+VS-16 sequences at the BASE character's
-        // text-presentation width — typically one column — NOT the
-        // two-column emoji-presentation width that Unicode says VS-16
-        // is supposed to force. Returning true here causes lanterna's
-        // putString to advance the cursor by two cells while the
-        // terminal only advances by one, which leaves a one-cell gap
-        // and shifts every following character left by one. Symptom:
-        // markdown table rows containing 🏷️ (LABEL + VS-16) drift the
-        // grid one column right of the emoji. Treating these graphemes
-        // as single-width keeps lanterna's cursor model in lockstep
-        // with what the terminal actually paints — the user-visible
-        // bug, fixed at the source.
+        // Variation Selector-15 (U+FE0E) explicitly asks for text presentation,
+        // so keep it single-width even though it makes the Java String longer
+        // than one char.
+        if (containsVariationSelector15(character)) {
+            return false;
+        }
+        // Variation Selector-16 (U+FE0F) is terminal-dependent in practice.
+        // In Vis target terminals, text-default BMP symbols such as ☑️ paint
+        // as one cell. Treat VS-16 graphemes as narrow so Lanterna does not
+        // over-advance and eat following whitespace / borders.
         if (containsVariationSelector16(character)) {
             return false;
+        }
+        // East-Asian *Ambiguous* width (Unicode EAW=A). These code points
+        // render as ONE column in Western/default terminals but TWO in
+        // terminals running ambiguous-wide (iTerm2 "treat ambiguous-width
+        // as double", CJK locales, tmux cjkwidth). Vis target terminals
+        // run ambiguous-wide, so a bare ambiguous char must advance two
+        // columns; otherwise prose drifts left and bleeds into the right
+        // gutter / scrollbar -- the "scrollbar teeth" bug (e.g. the `\u00b7`
+        // separators in pasted search output).
+        //
+        // Restricted to length()==1: graphemes carrying VS-15/VS-16 were
+        // already resolved by the guards above; multi-char graphemes are
+        // handled by the emoji branch below.
+        if (character.length() == 1 && isCharEastAsianAmbiguous(character.charAt(0))) {
+            return true;
         }
         return TerminalTextUtils.isCharDoubleWidth(character.charAt(0)) ||
                 isCharEmojiPresentation(character.charAt(0)) ||
@@ -418,11 +429,24 @@ public class TextCharacter implements Serializable {
     }
 
     /**
+     * True when {@code s} contains the Variation Selector-15 (U+FE0E)
+     * codepoint.
+     */
+    private static boolean containsVariationSelector15(String s) {
+        if (s.length() < 2) {
+            return false;
+        }
+        for (int i = 0; i < s.length(); i++) {
+            if (s.charAt(i) == '\uFE0E') {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * True when {@code s} contains the Variation Selector-16 (U+FE0F)
-     * codepoint. Tiny scan; called once per {@link #isDoubleWidth()}
-     * invocation and only matters for graphemes longer than one
-     * {@code char}, where the cost is negligible compared to the
-     * surrounding emoji handling.
+     * codepoint.
      */
     private static boolean containsVariationSelector16(String s) {
         if (s.length() < 2) {
@@ -510,6 +534,102 @@ public class TextCharacter implements Serializable {
                 || (c >= 0x2B1B && c <= 0x2B1C)    // ⬛..⬜ large black/white square
                 || (c == 0x2B50)                   // ⭐ white medium star
                 || (c == 0x2B55);                  // ⭕ hollow red circle
+    }
+
+    /**
+     * BMP code points with East-Asian-Width property `Ambiguous` (EAW=A)
+     * that should be allocated TWO terminal columns when Lanterna targets
+     * an ambiguous-wide terminal. Mirrors the Unicode `EastAsianWidth.txt`
+     * `A` rows, but DELIBERATELY CURATED to the text subset:
+     *
+     *   - Latin-1 punctuation/letters (incl. \u00b7 MIDDLE DOT),
+     *     Latin-Extended-A, IPA / spacing modifiers
+     *   - Greek + Coptic, Cyrillic
+     *   - General Punctuation (\u2010 \u2013-\u2016 dashes, \u2018-\u2019 /
+     *     \u201c-\u201d quotes, \u2020-\u2022 dagger/bullet, \u2024-\u2027 /
+     *     \u2026 ellipsis, \u2030 \u2032-\u2033 etc.)
+     *   - super/subscripts, \u20ac EURO, letterlike (\u2116 \u2122 \u2126 ...),
+     *     number forms / Roman numerals, common math operators
+     *
+     * EXCLUDED ON PURPOSE -- these are EAW=A too, but Vis paints them as
+     * structural chrome and the target terminal renders them NARROW, so
+     * widening them here would detonate the layout:
+     *
+     *   - Arrows U+2190..U+21FF      (footer hints up/down arrows)
+     *   - Enclosed alphanumerics U+2460..U+24FF
+     *   - Box drawing U+2500..U+257F (table borders, scrollbar \u2502)
+     *   - Block elements U+2580..U+259F (\u2588 thumb, \u258e gutter)
+     *   - Geometric shapes U+25A0..U+25FF (\u25b6 \u25bc markers)
+     *   - Misc symbols / Dingbats U+2600.. (handled by the emoji table)
+     *
+     * The upper bound 0x2312 cleanly drops everything from the enclosed /
+     * box-drawing blocks onward; the arrow block (below 0x2312) is skipped
+     * by simply having no range cover it.
+     */
+    private static boolean isCharEastAsianAmbiguous(char c) {
+        // O(1) membership test against a precomputed bitset; no branch
+        // chain. The `c < 0x00A1` fast-reject still wins for ASCII (the
+        // overwhelming common path) before BitSet#get ever runs.
+        return c >= 0x00A1 && c <= EAW_AMBIGUOUS_MAX && EAW_AMBIGUOUS.get(c);
+    }
+
+    /** Inclusive range bounds (lo, hi pairs) of the curated EAW=A set. */
+    private static final int[] EAW_AMBIGUOUS_RANGES = {
+        // Latin-1 Supplement
+        0x00A1, 0x00A1, 0x00A4, 0x00A4, 0x00A7, 0x00A8, 0x00AA, 0x00AA,
+        0x00AD, 0x00AE, 0x00B0, 0x00B4, 0x00B6, 0x00BA, 0x00BC, 0x00BF,
+        0x00C6, 0x00C6, 0x00D0, 0x00D0, 0x00D7, 0x00D8, 0x00DE, 0x00E1,
+        0x00E6, 0x00E6, 0x00E8, 0x00EA, 0x00EC, 0x00ED, 0x00F0, 0x00F0,
+        0x00F2, 0x00F3, 0x00F7, 0x00FA, 0x00FC, 0x00FC, 0x00FE, 0x00FE,
+        // Latin Extended-A
+        0x0101, 0x0101, 0x0111, 0x0111, 0x0113, 0x0113, 0x011B, 0x011B,
+        0x0126, 0x0127, 0x012B, 0x012B, 0x0131, 0x0133, 0x0138, 0x0138,
+        0x013F, 0x0142, 0x0144, 0x0144, 0x0148, 0x014B, 0x014D, 0x014D,
+        0x0152, 0x0153, 0x0166, 0x0167, 0x016B, 0x016B,
+        // IPA / spacing modifier letters
+        0x01CE, 0x01CE, 0x01D0, 0x01D0, 0x01D2, 0x01D2, 0x01D4, 0x01D4,
+        0x01D6, 0x01D6, 0x01D8, 0x01D8, 0x01DA, 0x01DA, 0x01DC, 0x01DC,
+        0x0251, 0x0251, 0x0261, 0x0261, 0x02C4, 0x02C4, 0x02C7, 0x02C7,
+        0x02C9, 0x02CB, 0x02CD, 0x02CD, 0x02D0, 0x02D0, 0x02D8, 0x02DB,
+        0x02DD, 0x02DD, 0x02DF, 0x02DF,
+        // Greek and Coptic
+        0x0391, 0x03A1, 0x03A3, 0x03A9, 0x03B1, 0x03C1, 0x03C3, 0x03C9,
+        // Cyrillic
+        0x0401, 0x0401, 0x0410, 0x044F, 0x0451, 0x0451,
+        // General Punctuation
+        0x2010, 0x2010, 0x2013, 0x2016, 0x2018, 0x2019, 0x201C, 0x201D,
+        0x2020, 0x2022, 0x2024, 0x2027, 0x2030, 0x2030, 0x2032, 0x2033,
+        0x2035, 0x2035, 0x203B, 0x203B, 0x203E, 0x203E,
+        // Super/subscripts, currency
+        0x2074, 0x2074, 0x207F, 0x207F, 0x2081, 0x2084, 0x20AC, 0x20AC,
+        // Letterlike symbols
+        0x2103, 0x2103, 0x2105, 0x2105, 0x2109, 0x2109, 0x2113, 0x2113,
+        0x2116, 0x2116, 0x2121, 0x2122, 0x2126, 0x2126, 0x212B, 0x212B,
+        // Number forms / Roman numerals
+        0x2153, 0x2154, 0x215B, 0x215E, 0x2160, 0x216B, 0x2170, 0x2179,
+        0x2189, 0x2189,
+        // Mathematical operators (arrows U+2190..U+21FF deliberately skipped)
+        0x2200, 0x2200, 0x2202, 0x2203, 0x2207, 0x2208, 0x220B, 0x220B,
+        0x220F, 0x220F, 0x2211, 0x2211, 0x2215, 0x2215, 0x221A, 0x221A,
+        0x221D, 0x2220, 0x2223, 0x2223, 0x2225, 0x2225, 0x2227, 0x222C,
+        0x222E, 0x222E, 0x2234, 0x2237, 0x223C, 0x223D, 0x2248, 0x2248,
+        0x224C, 0x224C, 0x2252, 0x2252, 0x2260, 0x2261, 0x2264, 0x2267,
+        0x226A, 0x226B, 0x226E, 0x226F, 0x2282, 0x2283, 0x2286, 0x2287,
+        0x2295, 0x2295, 0x2299, 0x2299, 0x22A5, 0x22A5, 0x22BF, 0x22BF,
+        0x2312, 0x2312,
+    };
+
+    private static final int EAW_AMBIGUOUS_MAX = 0x2312;
+
+    /** Built once at class load from {@link #EAW_AMBIGUOUS_RANGES}. */
+    private static final BitSet EAW_AMBIGUOUS = buildAmbiguousBitSet();
+
+    private static BitSet buildAmbiguousBitSet() {
+        BitSet bits = new BitSet(EAW_AMBIGUOUS_MAX + 1);
+        for (int i = 0; i < EAW_AMBIGUOUS_RANGES.length; i += 2) {
+            bits.set(EAW_AMBIGUOUS_RANGES[i], EAW_AMBIGUOUS_RANGES[i + 1] + 1);
+        }
+        return bits;
     }
 
     @SuppressWarnings("SimplifiableIfStatement")
