@@ -169,15 +169,23 @@ public class TextCharacter implements Serializable {
         }
         validateSingleCharacter(character);
 
-        // intern the string so we don't waste more memory than necessary
-        this.character = character.intern();
         char firstCharacter = character.charAt(0);
 
-        // Don't allow creating a TextCharacter containing a control character
-        // For backward-compatibility, do allow tab for now
+        // vis fork: SUBSTITUTE control characters (C0 0x00-0x1F + DEL 0x7F,
+        // per TerminalTextUtils.isControlCharacter), except TAB, with a space
+        // instead of throwing. Upstream threw IllegalArgumentException here,
+        // which let a single stray byte from dirty upstream text — e.g. a
+        // 0x7F (DEL) in scraped web content — crash a caller's render thread
+        // EVERY frame and freeze the whole TUI (vis session efa3371c). A
+        // space is harmless, width 1, and no caller can be taken down by one
+        // bad byte again. TAB is preserved for backward-compatibility.
         if(TerminalTextUtils.isControlCharacter(firstCharacter) && firstCharacter != '\t') {
-            throw new IllegalArgumentException("Cannot create a TextCharacter from a control character (0x" + Integer.toHexString(firstCharacter) + ")");
+            character = " ";
+            firstCharacter = ' ';
         }
+
+        // intern the string so we don't waste more memory than necessary
+        this.character = character.intern();
 
         if(foregroundColor == null) {
             foregroundColor = TextColor.ANSI.DEFAULT;
@@ -409,16 +417,25 @@ public class TextCharacter implements Serializable {
         // East-Asian *Ambiguous* width (Unicode EAW=A). These code points
         // render as ONE column in Western/default terminals but TWO in
         // terminals running ambiguous-wide (iTerm2 "treat ambiguous-width
-        // as double", CJK locales, tmux cjkwidth). Vis target terminals
-        // run ambiguous-wide, so a bare ambiguous char must advance two
-        // columns; otherwise prose drifts left and bleeds into the right
-        // gutter / scrollbar -- the "scrollbar teeth" bug (e.g. the `\u00b7`
-        // separators in pasted search output).
+        // as double", CJK locales, tmux cjkwidth).
+        //
+        // DEFAULT = NARROW. The overwhelming majority of modern terminals
+        // (Terminal.app, iTerm2 default, kitty, alacritty, wezterm, ghostty)
+        // render EAW=A as a single column. Forcing them double-width makes
+        // Lanterna over-advance the cursor on ordinary prose (em dash,
+        // ellipsis, curly quotes, bullet, middle dot ...), so glyphs paint
+        // one column short and the row bleeds into / leaves stale cells in
+        // the right gutter / borders -- the scroll-redraw artifacts.
+        //
+        // Terminals actually configured for ambiguous-wide can opt back in
+        // with `-Dlanterna.eastAsianAmbiguousWide=true`.
         //
         // Restricted to length()==1: graphemes carrying VS-15/VS-16 were
         // already resolved by the guards above; multi-char graphemes are
         // handled by the emoji branch below.
-        if (character.length() == 1 && isCharEastAsianAmbiguous(character.charAt(0))) {
+        if (EAW_AMBIGUOUS_WIDE
+                && character.length() == 1
+                && isCharEastAsianAmbiguous(character.charAt(0))) {
             return true;
         }
         return TerminalTextUtils.isCharDoubleWidth(character.charAt(0)) ||
@@ -572,6 +589,17 @@ public class TextCharacter implements Serializable {
         // overwhelming common path) before BitSet#get ever runs.
         return c >= 0x00A1 && c <= EAW_AMBIGUOUS_MAX && EAW_AMBIGUOUS.get(c);
     }
+
+    /**
+     * When {@code true}, curated East-Asian *Ambiguous* (EAW=A) code points
+     * are treated as DOUBLE width. Default {@code false} (narrow) because
+     * the overwhelming majority of modern terminals render EAW=A as a
+     * single column; forcing them wide over-advances the cursor on normal
+     * prose and produces scroll-redraw artifacts. Opt back in for genuine
+     * ambiguous-wide terminals with {@code -Dlanterna.eastAsianAmbiguousWide=true}.
+     */
+    private static final boolean EAW_AMBIGUOUS_WIDE =
+            Boolean.getBoolean("lanterna.eastAsianAmbiguousWide");
 
     /** Inclusive range bounds (lo, hi pairs) of the curated EAW=A set. */
     private static final int[] EAW_AMBIGUOUS_RANGES = {

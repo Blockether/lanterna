@@ -20,6 +20,29 @@ public class TextCharacterTest {
     }
 
     @Test
+    public void controlCharactersAreSubstitutedNotThrown() {
+        // vis fork regression (session efa3371c): a control char must NEVER
+        // throw — upstream did, and a single 0x7F (DEL) from scraped web
+        // content crashed the render thread every frame. They degrade to a
+        // space (width 1) so dirty upstream text can't take a caller down.
+        TextCharacter del = TextCharacter.fromString("\u007F")[0];
+        assertEquals(" ", del.getCharacterString());
+
+        TextCharacter c0 = TextCharacter.fromString("\u0007")[0]; // BEL
+        assertEquals(" ", c0.getCharacterString());
+
+        // A control char embedded in real text leaves the rest intact.
+        TextCharacter[] cells = TextCharacter.fromString("ab\u007Fcd");
+        assertEquals(5, cells.length);
+        assertEquals(" ", cells[2].getCharacterString());
+        assertEquals("a", cells[0].getCharacterString());
+        assertEquals("d", cells[4].getCharacterString());
+
+        // TAB stays special (backward-compat: not substituted).
+        assertEquals("\t", TextCharacter.fromString("\t")[0].getCharacterString());
+    }
+
+    @Test
     public void emojisAreDoubleWidth() {
         assertTrue(TextCharacter.fromString("\uD83D\uDC69\uD83C\uDFFD")[0].isDoubleWidth());
         assertTrue(TextCharacter.fromString("\uD83C\uDFE9")[0].isDoubleWidth());
@@ -34,20 +57,21 @@ public class TextCharacterTest {
     }
 
     @Test
-    public void eastAsianAmbiguousAreDoubleWidth() {
-        // The drift source: text punctuation / letters that target
-        // ambiguous-wide terminals render as two columns.
-        assertTrue(TextCharacter.fromString("\u00B7")[0].isDoubleWidth()); // · MIDDLE DOT (exa output separator)
-        assertTrue(TextCharacter.fromString("\u2014")[0].isDoubleWidth()); // — EM DASH
-        assertTrue(TextCharacter.fromString("\u2013")[0].isDoubleWidth()); // – EN DASH
-        assertTrue(TextCharacter.fromString("\u2026")[0].isDoubleWidth()); // … HORIZONTAL ELLIPSIS
-        assertTrue(TextCharacter.fromString("\u2022")[0].isDoubleWidth()); // • BULLET
-        assertTrue(TextCharacter.fromString("\u201C")[0].isDoubleWidth()); // “ LEFT DOUBLE QUOTE
-        assertTrue(TextCharacter.fromString("\u201D")[0].isDoubleWidth()); // ” RIGHT DOUBLE QUOTE
-        assertTrue(TextCharacter.fromString("\u03BB")[0].isDoubleWidth()); // λ GREEK SMALL LAMBDA
-        assertTrue(TextCharacter.fromString("\u00A7")[0].isDoubleWidth()); // § SECTION SIGN
-        assertTrue(TextCharacter.fromString("\u2122")[0].isDoubleWidth()); // ™ TRADE MARK
-        assertTrue(TextCharacter.fromString("\u0451")[0].isDoubleWidth()); // ё CYRILLIC
+    public void eastAsianAmbiguousAreSingleWidthByDefault() {
+        // DEFAULT = NARROW: modern terminals render EAW=A as one column, so
+        // ordinary prose punctuation / letters must NOT over-advance. (Opt
+        // into wide with -Dlanterna.eastAsianAmbiguousWide=true.)
+        assertFalse(TextCharacter.fromString("\u00B7")[0].isDoubleWidth()); // · MIDDLE DOT (exa output separator)
+        assertFalse(TextCharacter.fromString("\u2014")[0].isDoubleWidth()); // — EM DASH
+        assertFalse(TextCharacter.fromString("\u2013")[0].isDoubleWidth()); // – EN DASH
+        assertFalse(TextCharacter.fromString("\u2026")[0].isDoubleWidth()); // … HORIZONTAL ELLIPSIS
+        assertFalse(TextCharacter.fromString("\u2022")[0].isDoubleWidth()); // • BULLET
+        assertFalse(TextCharacter.fromString("\u201C")[0].isDoubleWidth()); // “ LEFT DOUBLE QUOTE
+        assertFalse(TextCharacter.fromString("\u201D")[0].isDoubleWidth()); // ” RIGHT DOUBLE QUOTE
+        assertFalse(TextCharacter.fromString("\u03BB")[0].isDoubleWidth()); // λ GREEK SMALL LAMBDA
+        assertFalse(TextCharacter.fromString("\u00A7")[0].isDoubleWidth()); // § SECTION SIGN
+        assertFalse(TextCharacter.fromString("\u2122")[0].isDoubleWidth()); // ™ TRADE MARK
+        assertFalse(TextCharacter.fromString("\u0451")[0].isDoubleWidth()); // ё CYRILLIC
     }
 
     @Test
