@@ -139,6 +139,15 @@ public class TerminalTextUtils {
                 // terminals paint emoji-wide; mirrors TextCharacter's
                 // isWideEmojiSymbol so getColumnWidth agrees with the paint.
                 || c == 0x25B6 || c == 0x25C0
+                // ⚠ U+26A0 WARNING SIGN — Emoji=Yes but Emoji_Presentation=No,
+                // so it is NOT in the EAW-wide table and Unicode defaults it to
+                // ONE column. The target terminals nonetheless paint the bare
+                // glyph (no VS-16) emoji-wide, so without this the row that
+                // carries "⚠ …" undercounts by a column and the closing border /
+                // scrollbar gets a tooth (content jammed against the ┃). VS-16
+                // forms (⚠️) were already wide via TextCharacter.isDoubleWidth;
+                // this makes the bare form agree.
+                || c == 0x26A0
                 // ● ◎ ◐ ◑ (U+25CE..U+25D1) + ○ U+25CB + ◯ U+25EF — filled / ring
                 // circle status markers (the header unread/running dot and kin).
                 // Fonts give these emoji presentation, so terminals paint them

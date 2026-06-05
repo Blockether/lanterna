@@ -54,6 +54,8 @@ public class TextCharacterTest {
         assertTrue(TextCharacter.fromString("\uD83D\uDC40")[0].isDoubleWidth());
         assertFalse(TextCharacter.fromString("\u2611\uFE0E")[0].isDoubleWidth()); // ☑︎ text presentation
         assertFalse(TextCharacter.fromString("M")[0].isDoubleWidth());  // Not emoji
+        assertTrue(TextCharacter.fromString("⚠️")[0].isDoubleWidth()); // warning sign + VS-16 -> WIDE
+        assertTrue(TextCharacter.fromString("⚠")[0].isDoubleWidth());       // bare U+26A0 WARNING SIGN -> force-wide (terminal paints it emoji-wide)
         // Media-control triangles ▶ / ◀ are Emoji=Yes (Presentation=No) but
         // target terminals paint them emoji-wide — count them double so rows
         // don't undercount and bleed into the scrollbar gutter.

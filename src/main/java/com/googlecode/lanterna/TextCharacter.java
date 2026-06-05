@@ -569,7 +569,10 @@ public class TextCharacter implements Serializable {
      * emoji, so they stay single-width and are deliberately excluded.
      */
     private static boolean isWideEmojiSymbol(char c) {
-        return c == 0x25B6 || c == 0x25C0;
+        // ⚠ U+26A0 WARNING SIGN: Emoji=Yes / Presentation=No, bare glyph paints
+        // wide on the target terminals. Also force-wide in
+        // TerminalTextUtils.isCharDoubleWidth so the paint path agrees.
+        return c == 0x25B6 || c == 0x25C0 || c == 0x26A0;
     }
 
     /**
