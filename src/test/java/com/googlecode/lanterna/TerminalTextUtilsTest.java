@@ -108,6 +108,31 @@ public class TerminalTextUtilsTest {
     }
 
     @Test
+    public void eastAsianWideTable_widensWFcharsOutsideCJKblocks() {
+        // EAW = W / F → two columns. These are the ones that used to slip
+        // through isCharCJK (not in a CJK Unicode block) and undercount,
+        // drifting the scrollbar / following cells.
+        assertTrue("U+2329 〈 (angle bracket, W)", TerminalTextUtils.isCharEastAsianWide('〈'));
+        assertTrue("U+232A 〉 (angle bracket, W)", TerminalTextUtils.isCharEastAsianWide('〉'));
+        assertTrue("U+3105 ㄅ (Bopomofo, W)",       TerminalTextUtils.isCharEastAsianWide('ㄅ'));
+        assertTrue("U+4E00 一 (CJK, W)",            TerminalTextUtils.isCharEastAsianWide('一'));
+        assertTrue("U+FF01 ！ (Fullwidth, F)",       TerminalTextUtils.isCharEastAsianWide('！'));
+        // and they now report double-width through the shared predicate:
+        assertTrue(TerminalTextUtils.isCharDoubleWidth('〈'));
+        assertEquals(4, TerminalTextUtils.getColumnWidth("〈〉")); // 〈〉 = 2+2, not 2
+
+        // NARROW must stay narrow — chrome + ASCII + ambiguous + neutral.
+        assertFalse("ASCII A",            TerminalTextUtils.isCharEastAsianWide('A'));
+        assertFalse("U+2502 │ box-draw",  TerminalTextUtils.isCharEastAsianWide('│'));
+        assertFalse("U+2588 █ block",     TerminalTextUtils.isCharEastAsianWide('█'));
+        assertFalse("U+25B6 ▶ geometric", TerminalTextUtils.isCharEastAsianWide('▶'));
+        assertFalse("U+2014 — em dash (EAW=A)", TerminalTextUtils.isCharEastAsianWide('—'));
+        assertFalse("U+2630 ☰ trigram (not W)",  TerminalTextUtils.isCharEastAsianWide('☰'));
+        // chrome stays single-width end to end:
+        assertEquals(3, TerminalTextUtils.getColumnWidth("│█▶"));
+    }
+
+    @Test
     public void getColumnIndexGeneralTest() {
         String testString = "端末（英: computer terminal）";
         assertEquals(0, TerminalTextUtils.getColumnIndex(testString, 0));
