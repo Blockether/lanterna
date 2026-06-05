@@ -47,13 +47,21 @@ public class TextCharacterTest {
         assertTrue(TextCharacter.fromString("\uD83D\uDC69\uD83C\uDFFD")[0].isDoubleWidth());
         assertTrue(TextCharacter.fromString("\uD83C\uDFE9")[0].isDoubleWidth());
         assertTrue(TextCharacter.fromString("\uD83D\uDC96")[0].isDoubleWidth());
-        assertFalse(TextCharacter.fromString("❤\uFE0F")[0].isDoubleWidth()); // terminal-matching override
-        assertFalse(TextCharacter.fromString("\uD83C\uDFF7\uFE0F")[0].isDoubleWidth()); // 🏷️ terminal-matching override
-        assertFalse(TextCharacter.fromString("\u2611\uFE0F")[0].isDoubleWidth()); // ☑️ matches target terminals
+        assertTrue(TextCharacter.fromString("❤\uFE0F")[0].isDoubleWidth()); // VS-16 emoji presentation -> WIDE (emoji-wide terminal)
+        assertTrue(TextCharacter.fromString("\uD83C\uDFF7\uFE0F")[0].isDoubleWidth()); // 🏷️ terminal-matching override
+        assertTrue(TextCharacter.fromString("\u2611\uFE0F")[0].isDoubleWidth()); // ☑️ VS-16 -> WIDE (emoji-wide terminal)
         assertTrue(TextCharacter.fromString("\uD83D\uDE0A")[0].isDoubleWidth());
         assertTrue(TextCharacter.fromString("\uD83D\uDC40")[0].isDoubleWidth());
         assertFalse(TextCharacter.fromString("\u2611\uFE0E")[0].isDoubleWidth()); // ☑︎ text presentation
         assertFalse(TextCharacter.fromString("M")[0].isDoubleWidth());  // Not emoji
+        // Media-control triangles ▶ / ◀ are Emoji=Yes (Presentation=No) but
+        // target terminals paint them emoji-wide — count them double so rows
+        // don't undercount and bleed into the scrollbar gutter.
+        assertTrue(TextCharacter.fromString("▶")[0].isDoubleWidth());  // ▶
+        assertTrue(TextCharacter.fromString("◀")[0].isDoubleWidth());  // ◀
+        // The SMALL disclosure-chevron triangles are EAW=N + non-emoji: narrow.
+        assertFalse(TextCharacter.fromString("▸")[0].isDoubleWidth()); // ▸
+        assertFalse(TextCharacter.fromString("▾")[0].isDoubleWidth()); // ▾
     }
 
     @Test
@@ -83,8 +91,8 @@ public class TextCharacterTest {
         assertFalse(TextCharacter.fromString("\u250C")[0].isDoubleWidth()); // ┌ corner
         assertFalse(TextCharacter.fromString("\u2588")[0].isDoubleWidth()); // █ scrollbar thumb
         assertFalse(TextCharacter.fromString("\u258E")[0].isDoubleWidth()); // ▎ gutter glyph
-        assertFalse(TextCharacter.fromString("\u25B6")[0].isDoubleWidth()); // ▶ op-row marker
-        assertFalse(TextCharacter.fromString("\u25BC")[0].isDoubleWidth()); // ▼ marker
+        assertFalse(TextCharacter.fromString("\u25B8")[0].isDoubleWidth()); // ▶ op-row marker
+        assertFalse(TextCharacter.fromString("\u25BE")[0].isDoubleWidth()); // ▼ marker
         assertFalse(TextCharacter.fromString("\u2191")[0].isDoubleWidth()); // ↑ footer hint arrow
         assertFalse(TextCharacter.fromString("\u2193")[0].isDoubleWidth()); // ↓ footer hint arrow
         assertFalse(TextCharacter.fromString("A")[0].isDoubleWidth());      // plain ASCII

@@ -407,12 +407,14 @@ public class TextCharacter implements Serializable {
         if (containsVariationSelector15(character)) {
             return false;
         }
-        // Variation Selector-16 (U+FE0F) is terminal-dependent in practice.
-        // In Vis target terminals, text-default BMP symbols such as ☑️ paint
-        // as one cell. Treat VS-16 graphemes as narrow so Lanterna does not
-        // over-advance and eat following whitespace / borders.
+        // Variation Selector-16 (U+FE0F) requests EMOJI presentation. The Vis
+        // target terminals are emoji-wide: they paint a VS-16 grapheme
+        // (⚠️ ❤️ ☑️ 🏷️ …) as TWO cells. Count it double so Lanterna advances
+        // the cursor in step with the terminal — otherwise the row undercounts
+        // and the following text / border / scrollbar shifts left by a column.
+        // (VS-15 above stays narrow: it explicitly asks for TEXT presentation.)
         if (containsVariationSelector16(character)) {
-            return false;
+            return true;
         }
         // East-Asian *Ambiguous* width (Unicode EAW=A). These code points
         // render as ONE column in Western/default terminals but TWO in
@@ -440,6 +442,7 @@ public class TextCharacter implements Serializable {
         }
         return TerminalTextUtils.isCharDoubleWidth(character.charAt(0)) ||
                 isCharEmojiPresentation(character.charAt(0)) ||
+                isWideEmojiSymbol(character.charAt(0)) ||
                 isEmoji(character) ||
                 // If the character takes up more than one char, assume it's double width (unless thai)
                 (character.length() > 1 && !TerminalTextUtils.isCharThai(character.charAt(0)));
@@ -551,6 +554,22 @@ public class TextCharacter implements Serializable {
                 || (c >= 0x2B1B && c <= 0x2B1C)    // ⬛..⬜ large black/white square
                 || (c == 0x2B50)                   // ⭐ white medium star
                 || (c == 0x2B55);                  // ⭕ hollow red circle
+    }
+
+    /**
+     * Emoji=Yes BMP base symbols whose Unicode {@code Emoji_Presentation} is
+     * NO (text-default) but which Vis target terminals nonetheless paint as
+     * TWO columns — the media-control triangles ▶ (U+25B6 BLACK RIGHT-POINTING
+     * TRIANGLE) and ◀ (U+25C0 BLACK LEFT-POINTING TRIANGLE). Per Unicode these
+     * default to text presentation (one column) and only widen with VS-16
+     * (U+FE0F), but the target terminals render the bare glyph emoji-wide. If
+     * Lanterna counts them as one column the row undercounts by one and the
+     * cursor over-advances — content bleeds into the right gutter / scrollbar
+     * (the "teeth"). The SMALL triangles ▸ U+25B8 / ▾ U+25BE are EAW=N and NOT
+     * emoji, so they stay single-width and are deliberately excluded.
+     */
+    private static boolean isWideEmojiSymbol(char c) {
+        return c == 0x25B6 || c == 0x25C0;
     }
 
     /**

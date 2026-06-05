@@ -134,7 +134,11 @@ public class TerminalTextUtils {
      * otherwise {@code false}
      */
     public static boolean isCharDoubleWidth(final char c) {
-        return isCharCJK(c) || isCharEastAsianWide(c);
+        return isCharCJK(c) || isCharEastAsianWide(c)
+                // ▶ U+25B6 / ◀ U+25C0 — Emoji=Yes media triangles the target
+                // terminals paint emoji-wide; mirrors TextCharacter's
+                // isWideEmojiSymbol so getColumnWidth agrees with the paint.
+                || c == 0x25B6 || c == 0x25C0;
     }
 
     /**
