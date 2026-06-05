@@ -47,20 +47,19 @@ public class TextCharacterTest {
         assertTrue(TextCharacter.fromString("\uD83D\uDC69\uD83C\uDFFD")[0].isDoubleWidth());
         assertTrue(TextCharacter.fromString("\uD83C\uDFE9")[0].isDoubleWidth());
         assertTrue(TextCharacter.fromString("\uD83D\uDC96")[0].isDoubleWidth());
-        assertTrue(TextCharacter.fromString("❤\uFE0F")[0].isDoubleWidth()); // VS-16 emoji presentation -> WIDE (emoji-wide terminal)
+        assertFalse(TextCharacter.fromString("❤\uFE0F")[0].isDoubleWidth()); // base U+2764 (text-default) + VS-16 -> NARROW
         assertTrue(TextCharacter.fromString("\uD83C\uDFF7\uFE0F")[0].isDoubleWidth()); // 🏷️ terminal-matching override
-        assertTrue(TextCharacter.fromString("\u2611\uFE0F")[0].isDoubleWidth()); // ☑️ VS-16 -> WIDE (emoji-wide terminal)
+        assertFalse(TextCharacter.fromString("\u2611\uFE0F")[0].isDoubleWidth()); // base U+2611 (text-default) + VS-16 -> NARROW
         assertTrue(TextCharacter.fromString("\uD83D\uDE0A")[0].isDoubleWidth());
         assertTrue(TextCharacter.fromString("\uD83D\uDC40")[0].isDoubleWidth());
         assertFalse(TextCharacter.fromString("\u2611\uFE0E")[0].isDoubleWidth()); // ☑︎ text presentation
         assertFalse(TextCharacter.fromString("M")[0].isDoubleWidth());  // Not emoji
-        assertTrue(TextCharacter.fromString("⚠️")[0].isDoubleWidth()); // warning sign + VS-16 -> WIDE
-        assertTrue(TextCharacter.fromString("⚠")[0].isDoubleWidth());       // bare U+26A0 WARNING SIGN -> force-wide (terminal paints it emoji-wide)
-        // Media-control triangles ▶ / ◀ are Emoji=Yes (Presentation=No) but
-        // target terminals paint them emoji-wide — count them double so rows
-        // don't undercount and bleed into the scrollbar gutter.
-        assertTrue(TextCharacter.fromString("▶")[0].isDoubleWidth());  // ▶
-        assertTrue(TextCharacter.fromString("◀")[0].isDoubleWidth());  // ◀
+        assertFalse(TextCharacter.fromString("⚠️")[0].isDoubleWidth()); // base U+26A0 (text-default) + VS-16 -> NARROW
+        assertFalse(TextCharacter.fromString("⚠")[0].isDoubleWidth());       // bare U+26A0 WARNING SIGN -> NARROW (standard width)
+        // Media-control triangles (U+25B6 / U+25C0) and disclosure
+        // chevrons (U+25B8 / U+25BE) are text-presentation: ONE column.
+        assertFalse(TextCharacter.fromString("▶")[0].isDoubleWidth());  // media triangle U+25B6 -> NARROW (standard width)
+        assertFalse(TextCharacter.fromString("◀")[0].isDoubleWidth());  // media triangle U+25C0 -> NARROW (standard width)
         // The SMALL disclosure-chevron triangles are EAW=N + non-emoji: narrow.
         assertFalse(TextCharacter.fromString("▸")[0].isDoubleWidth()); // ▸
         assertFalse(TextCharacter.fromString("▾")[0].isDoubleWidth()); // ▾
@@ -81,10 +80,10 @@ public class TextCharacterTest {
         assertFalse(TextCharacter.fromString("\u00A7")[0].isDoubleWidth()); // § SECTION SIGN
         assertFalse(TextCharacter.fromString("\u2122")[0].isDoubleWidth()); // ™ TRADE MARK
         assertFalse(TextCharacter.fromString("\u0451")[0].isDoubleWidth()); // ё CYRILLIC
-        // ...the circle status DOTS are force-wide as emoji presentation (NOT via
-        // the ambiguous flag) -- this is the header-dot fix:
-        assertTrue(TextCharacter.fromString("\u25CF")[0].isDoubleWidth());  // BLACK CIRCLE header dot
-        assertTrue(TextCharacter.fromString("\u25CB")[0].isDoubleWidth());  // WHITE CIRCLE
+        // ...the circle status dots are EAW=Ambiguous geometric shapes:
+        // NARROW by default (standard width), like every other EAW=A glyph above.
+        assertFalse(TextCharacter.fromString("\u25CF")[0].isDoubleWidth());  // ● BLACK CIRCLE -> NARROW
+        assertFalse(TextCharacter.fromString("\u25CB")[0].isDoubleWidth());  // ○ WHITE CIRCLE -> NARROW
         assertFalse(TextCharacter.fromString("\u25B8")[0].isDoubleWidth()); // chevron stays narrow
         assertFalse(TextCharacter.fromString("\u25BE")[0].isDoubleWidth()); // chevron stays narrow
     }

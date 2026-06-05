@@ -134,27 +134,18 @@ public class TerminalTextUtils {
      * otherwise {@code false}
      */
     public static boolean isCharDoubleWidth(final char c) {
-        return isCharCJK(c) || isCharEastAsianWide(c)
-                // ▶ U+25B6 / ◀ U+25C0 — Emoji=Yes media triangles the target
-                // terminals paint emoji-wide; mirrors TextCharacter's
-                // isWideEmojiSymbol so getColumnWidth agrees with the paint.
-                || c == 0x25B6 || c == 0x25C0
-                // ⚠ U+26A0 WARNING SIGN — Emoji=Yes but Emoji_Presentation=No,
-                // so it is NOT in the EAW-wide table and Unicode defaults it to
-                // ONE column. The target terminals nonetheless paint the bare
-                // glyph (no VS-16) emoji-wide, so without this the row that
-                // carries "⚠ …" undercounts by a column and the closing border /
-                // scrollbar gets a tooth (content jammed against the ┃). VS-16
-                // forms (⚠️) were already wide via TextCharacter.isDoubleWidth;
-                // this makes the bare form agree.
-                || c == 0x26A0
-                // ● ◎ ◐ ◑ (U+25CE..U+25D1) + ○ U+25CB + ◯ U+25EF — filled / ring
-                // circle status markers (the header unread/running dot and kin).
-                // Fonts give these emoji presentation, so terminals paint them
-                // TWO columns; force-wide so getColumnWidth / isDoubleWidth match
-                // and the dot no longer overruns its trailing space. The EAW=N
-                // small triangles ▸/▾ (disclosure chevrons) are NOT here.
-                || (c >= 0x25CE && c <= 0x25D1) || c == 0x25CB || c == 0x25EF;
+        // STANDARD WIDTH ONLY: CJK plus the Unicode East-Asian Wide/Fullwidth
+        // table. Geometric / symbol glyphs that are EAW=Ambiguous or EAW=Neutral
+        // — ● ○ ◯ ◎ ◐ ◑ (circle status dots), ▶ ◀ (media triangles), ⚠ (warning
+        // sign) and kin — are ONE column on standard/modern terminals. They were
+        // briefly force-widened here, but that OVER-counts the row on terminals
+        // that render them narrow, pushing following cells and borders one column
+        // out of alignment (e.g. a focused tab's "● " prefix shoving its trailing
+        // │ left). Genuine emoji are still handled wide in
+        // TextCharacter.isDoubleWidth (emoji-presentation table + astral/length>1).
+        // Terminals configured emoji/ambiguous-wide can opt back in with
+        // -Dlanterna.eastAsianAmbiguousWide=true.
+        return isCharCJK(c) || isCharEastAsianWide(c);
     }
 
     /**

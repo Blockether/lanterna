@@ -130,11 +130,11 @@ public class TerminalTextUtilsTest {
         assertFalse("U+2630 ☰ trigram (not W)",  TerminalTextUtils.isCharEastAsianWide('☰'));
         // box-draw + block stay single-width end to end:
         assertEquals(2, TerminalTextUtils.getColumnWidth("│█"));
-        // ...▶ is the emoji-wide media-triangle exception (force-wide via
-        // isCharDoubleWidth, NOT the W/F EAW table asserted above), so a row
-        // containing it advances the extra column.
-        assertTrue("U+25B6 ▶ is emoji-wide", TerminalTextUtils.isCharDoubleWidth('▶'));
-        assertEquals(4, TerminalTextUtils.getColumnWidth("│█▶"));
+        // ...▶ is a text-presentation media triangle: ONE column
+        // (standard width), like the box/block chrome above, so a row
+        // containing it does NOT advance an extra column.
+        assertFalse("U+25B6 ▶ is standard one-column", TerminalTextUtils.isCharDoubleWidth('▶'));
+        assertEquals(3, TerminalTextUtils.getColumnWidth("│█▶"));
     }
 
     @Test

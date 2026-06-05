@@ -4,8 +4,8 @@
     <artifactId>lanterna</artifactId>
     <packaging>jar</packaging>
     <name>Lanterna (Blockether vis fork)</name>
-    <description>Patched build of mabe02/lanterna 3.1.5 with PR #625 (emoji rendering in StreamBasedTerminal/AbstractTextGraphics) cherry-picked, plus Blockether-original fixes for BMP emoji-presentation width detection (✅, ⭐, ⚡, etc. counted as two terminal columns), VS-15 text-presentation width, VS-16 terminal width overrides (☑️/🏷️/❤️ narrow by default), and East-Asian-Ambiguous (EAW=A) width: curated text punctuation/letters (·, —, …, λ, quotes, ™, Greek, Cyrillic) counted as two columns to match ambiguous-wide target terminals, while structural chrome (box drawing, blocks, shapes, arrows) stays single-column. Drop-in replacement for com.googlecode.lanterna:lanterna:3.1.5 — same packages, same classes. Will be retired when upstream ships equivalent fixes.</description>
-    <version>3.1.5-vis.11</version>
+    <description>Patched build of mabe02/lanterna 3.1.5 with PR #625 (emoji rendering in StreamBasedTerminal/AbstractTextGraphics) cherry-picked, plus Blockether-original width fixes using STANDARD Unicode widths: BMP Emoji_Presentation=Yes glyphs and genuine astral/surrogate emoji count as two columns; VS-15 text-presentation stays one column; VS-16 on text-default BMP symbols (warning sign, ballot box, heart) and bare geometric/symbol glyphs (circles, media triangles) stay ONE column so they do not over-count and shove following cells / borders out of alignment; East-Asian-Ambiguous (EAW=A) is one column by default (opt in with -Dlanterna.eastAsianAmbiguousWide=true); control chars degrade to a space instead of throwing. Drop-in replacement for com.googlecode.lanterna:lanterna:3.1.5 - same packages, same classes. Retire when upstream ships equivalent fixes.</description>
+    <version>3.1.5-vis.12</version>
     <url>https://github.com/Blockether/lanterna</url>
 
     <licenses>
