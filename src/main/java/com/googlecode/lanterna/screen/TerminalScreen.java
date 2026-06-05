@@ -256,6 +256,7 @@ public class TerminalScreen extends AbstractScreen {
         }
     }
 
+
     private void refreshFull() throws IOException {
         getTerminal().setForegroundColor(TextColor.ANSI.DEFAULT);
         getTerminal().setBackgroundColor(TextColor.ANSI.DEFAULT);

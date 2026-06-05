@@ -66,9 +66,8 @@ public class TextCharacterTest {
 
     @Test
     public void eastAsianAmbiguousAreSingleWidthByDefault() {
-        // DEFAULT = NARROW: modern terminals render EAW=A as one column, so
-        // ordinary prose punctuation / letters must NOT over-advance. (Opt
-        // into wide with -Dlanterna.eastAsianAmbiguousWide=true.)
+        // DEFAULT = NARROW: EAW=A is one column on modern terminals, so prose
+        // must NOT over-advance. Opt in: -Dlanterna.eastAsianAmbiguousWide=true.
         assertFalse(TextCharacter.fromString("\u00B7")[0].isDoubleWidth()); // · MIDDLE DOT (exa output separator)
         assertFalse(TextCharacter.fromString("\u2014")[0].isDoubleWidth()); // — EM DASH
         assertFalse(TextCharacter.fromString("\u2013")[0].isDoubleWidth()); // – EN DASH
@@ -80,6 +79,12 @@ public class TextCharacterTest {
         assertFalse(TextCharacter.fromString("\u00A7")[0].isDoubleWidth()); // § SECTION SIGN
         assertFalse(TextCharacter.fromString("\u2122")[0].isDoubleWidth()); // ™ TRADE MARK
         assertFalse(TextCharacter.fromString("\u0451")[0].isDoubleWidth()); // ё CYRILLIC
+        // ...the circle status DOTS are force-wide as emoji presentation (NOT via
+        // the ambiguous flag) -- this is the header-dot fix:
+        assertTrue(TextCharacter.fromString("\u25CF")[0].isDoubleWidth());  // BLACK CIRCLE header dot
+        assertTrue(TextCharacter.fromString("\u25CB")[0].isDoubleWidth());  // WHITE CIRCLE
+        assertFalse(TextCharacter.fromString("\u25B8")[0].isDoubleWidth()); // chevron stays narrow
+        assertFalse(TextCharacter.fromString("\u25BE")[0].isDoubleWidth()); // chevron stays narrow
     }
 
     @Test
@@ -91,8 +96,8 @@ public class TextCharacterTest {
         assertFalse(TextCharacter.fromString("\u250C")[0].isDoubleWidth()); // ┌ corner
         assertFalse(TextCharacter.fromString("\u2588")[0].isDoubleWidth()); // █ scrollbar thumb
         assertFalse(TextCharacter.fromString("\u258E")[0].isDoubleWidth()); // ▎ gutter glyph
-        assertFalse(TextCharacter.fromString("\u25B8")[0].isDoubleWidth()); // ▶ op-row marker
-        assertFalse(TextCharacter.fromString("\u25BE")[0].isDoubleWidth()); // ▼ marker
+        assertFalse(TextCharacter.fromString("\u25B8")[0].isDoubleWidth()); // ▸ op-row marker (EAW=N chrome)
+        assertFalse(TextCharacter.fromString("\u25BE")[0].isDoubleWidth()); // ▾ marker (EAW=N chrome)
         assertFalse(TextCharacter.fromString("\u2191")[0].isDoubleWidth()); // ↑ footer hint arrow
         assertFalse(TextCharacter.fromString("\u2193")[0].isDoubleWidth()); // ↓ footer hint arrow
         assertFalse(TextCharacter.fromString("A")[0].isDoubleWidth());      // plain ASCII

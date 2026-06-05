@@ -617,6 +617,14 @@ public class TextCharacter implements Serializable {
      * prose and produces scroll-redraw artifacts. Opt back in for genuine
      * ambiguous-wide terminals with {@code -Dlanterna.eastAsianAmbiguousWide=true}.
      */
+    // DEFAULT OFF. EAW=A renders as ONE column on most modern terminals;
+    // widening ordinary prose (em dash, ellipsis, bullet, middle dot, curly
+    // quotes …) over-advances the cursor so glyphs paint a column short and the
+    // row leaves stale cells -- the scroll-redraw artifacts. The header status
+    // DOTS (● ○ …) are NOT handled here: their font gives them emoji
+    // presentation (genuinely 2 cols), so they're force-wide in
+    // TerminalTextUtils.isCharDoubleWidth regardless of this flag. Opt the whole
+    // EAW=A class into wide per-terminal with -Dlanterna.eastAsianAmbiguousWide=true.
     private static final boolean EAW_AMBIGUOUS_WIDE =
             Boolean.getBoolean("lanterna.eastAsianAmbiguousWide");
 

@@ -128,8 +128,13 @@ public class TerminalTextUtilsTest {
         assertFalse("U+25B6 ▶ geometric", TerminalTextUtils.isCharEastAsianWide('▶'));
         assertFalse("U+2014 — em dash (EAW=A)", TerminalTextUtils.isCharEastAsianWide('—'));
         assertFalse("U+2630 ☰ trigram (not W)",  TerminalTextUtils.isCharEastAsianWide('☰'));
-        // chrome stays single-width end to end:
-        assertEquals(3, TerminalTextUtils.getColumnWidth("│█▶"));
+        // box-draw + block stay single-width end to end:
+        assertEquals(2, TerminalTextUtils.getColumnWidth("│█"));
+        // ...▶ is the emoji-wide media-triangle exception (force-wide via
+        // isCharDoubleWidth, NOT the W/F EAW table asserted above), so a row
+        // containing it advances the extra column.
+        assertTrue("U+25B6 ▶ is emoji-wide", TerminalTextUtils.isCharDoubleWidth('▶'));
+        assertEquals(4, TerminalTextUtils.getColumnWidth("│█▶"));
     }
 
     @Test

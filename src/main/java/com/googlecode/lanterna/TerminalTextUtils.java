@@ -138,7 +138,14 @@ public class TerminalTextUtils {
                 // ▶ U+25B6 / ◀ U+25C0 — Emoji=Yes media triangles the target
                 // terminals paint emoji-wide; mirrors TextCharacter's
                 // isWideEmojiSymbol so getColumnWidth agrees with the paint.
-                || c == 0x25B6 || c == 0x25C0;
+                || c == 0x25B6 || c == 0x25C0
+                // ● ◎ ◐ ◑ (U+25CE..U+25D1) + ○ U+25CB + ◯ U+25EF — filled / ring
+                // circle status markers (the header unread/running dot and kin).
+                // Fonts give these emoji presentation, so terminals paint them
+                // TWO columns; force-wide so getColumnWidth / isDoubleWidth match
+                // and the dot no longer overruns its trailing space. The EAW=N
+                // small triangles ▸/▾ (disclosure chevrons) are NOT here.
+                || (c >= 0x25CE && c <= 0x25D1) || c == 0x25CB || c == 0x25EF;
     }
 
     /**
@@ -427,6 +434,239 @@ public class TerminalTextUtils {
             }
         }
         return result;
+    }
+
+    // ===================================================================
+    // vis fork: grapheme/EAW-aware text flow — display-width word-wrap and
+    // full justification.
+    //
+    // Upstream getColumnWidth/getWordWrappedText measure by Java `char`
+    // (isCharDoubleWidth), so an emoji surrogate pair, a ZWJ sequence, a
+    // regional-indicator flag or a VS-16 grapheme is mis-measured. These
+    // methods measure the SAME way the screen paints — one TextCharacter per
+    // grapheme cluster, double-width clusters = 2 columns — so wrap points and
+    // justified widths line up exactly with what lands on the terminal.
+    //
+    // Plain text only: they have no notion of inline-style sentinels or ANSI
+    // escapes (use the channel's styled-run wrapper for those).
+    // ===================================================================
+
+    /**
+     * Display columns a string occupies, grapheme-cluster and East-Asian-Width
+     * aware (one {@link TextCharacter} per cluster; double-width clusters count
+     * as two). Matches the cell model the screen renders with, unlike the
+     * {@code char}-based {@link #getColumnWidth(String)}.
+     * @param s string to measure (nullable)
+     * @return number of terminal columns
+     */
+    public static int displayWidth(String s) {
+        if (s == null || s.isEmpty()) {
+            return 0;
+        }
+        // Fast path: a string with NO character at or above U+0300 has no
+        // combining marks, variation selectors, ZWJ, surrogate pairs (emoji /
+        // SMP) and no wide glyphs — every char is its own width-1 cell, so the
+        // width is simply the length. This skips BreakIterator grapheme
+        // segmentation (and its per-cluster allocation) for the dominant
+        // ASCII/Latin case, which is ~100x cheaper. Anything from U+0300 up
+        // (CJK, emoji, accents-as-combining, …) takes the exact grapheme path.
+        int n = s.length();
+        boolean simple = true;
+        for (int i = 0; i < n; i++) {
+            if (s.charAt(i) >= 0x0300) {
+                simple = false;
+                break;
+            }
+        }
+        if (simple) {
+            return n;
+        }
+        int width = 0;
+        for (TextCharacter tc : TextCharacter.fromString(s)) {
+            width += tc.isDoubleWidth() ? 2 : 1;
+        }
+        return width;
+    }
+
+    /**
+     * Greedy word-wrap {@code text} so every returned line fits within
+     * {@code maxColumns} display columns. Breaks on whitespace; a single token
+     * wider than {@code maxColumns} is hard-split at grapheme boundaries (never
+     * mid-cluster). Embedded {@code '\n'} are honoured as hard breaks. Always
+     * returns at least one (possibly empty) line.
+     * @param maxColumns wrap width in columns; &lt;= 0 yields a single empty line
+     * @param text input (nullable)
+     * @return wrapped lines, each {@link #displayWidth} &lt;= {@code maxColumns}
+     */
+    public static List<String> wordWrap(int maxColumns, String text) {
+        List<String> out = new ArrayList<>();
+        if (text == null) {
+            text = "";
+        }
+        if (maxColumns <= 0) {
+            out.add("");
+            return out;
+        }
+        for (String paragraph : text.split("\n", -1)) {
+            wrapParagraph(maxColumns, paragraph, out);
+        }
+        if (out.isEmpty()) {
+            out.add("");
+        }
+        return out;
+    }
+
+    private static void wrapParagraph(int maxColumns, String paragraph, List<String> out) {
+        String trimmed = paragraph.trim();
+        if (trimmed.isEmpty()) {
+            out.add("");
+            return;
+        }
+        StringBuilder line = new StringBuilder();
+        int lineWidth = 0;
+        for (String word : trimmed.split("\\s+")) {
+            int wordWidth = displayWidth(word);
+            if (wordWidth > maxColumns) {
+                if (lineWidth > 0) {
+                    out.add(line.toString());
+                    line.setLength(0);
+                    lineWidth = 0;
+                }
+                List<String> pieces = hardSplitColumns(word, maxColumns);
+                for (int i = 0; i < pieces.size() - 1; i++) {
+                    out.add(pieces.get(i));
+                }
+                String last = pieces.get(pieces.size() - 1);
+                line.append(last);
+                lineWidth = displayWidth(last);
+            }
+            else {
+                int separator = lineWidth == 0 ? 0 : 1;
+                if (lineWidth + separator + wordWidth <= maxColumns) {
+                    if (separator == 1) {
+                        line.append(' ');
+                    }
+                    line.append(word);
+                    lineWidth += separator + wordWidth;
+                }
+                else {
+                    out.add(line.toString());
+                    line.setLength(0);
+                    line.append(word);
+                    lineWidth = wordWidth;
+                }
+            }
+        }
+        if (line.length() > 0) {
+            out.add(line.toString());
+        }
+    }
+
+    private static List<String> hardSplitColumns(String word, int maxColumns) {
+        List<String> pieces = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        int currentWidth = 0;
+        for (TextCharacter tc : TextCharacter.fromString(word)) {
+            int w = tc.isDoubleWidth() ? 2 : 1;
+            if (currentWidth > 0 && currentWidth + w > maxColumns) {
+                pieces.add(current.toString());
+                current.setLength(0);
+                currentWidth = 0;
+            }
+            current.append(tc.getCharacterString());
+            currentWidth += w;
+        }
+        pieces.add(current.toString());
+        return pieces;
+    }
+
+    /**
+     * Full-justify the words on a single line to EXACTLY {@code width} display
+     * columns by distributing spaces as evenly as possible between them (flush
+     * to both margins). A blank line is returned as {@code width} spaces; a
+     * single-word line (nothing to stretch) is left-aligned and right-padded.
+     * Intended for lines already produced by {@link #wordWrap}; an over-long
+     * line is joined with single spaces and right-padded instead of overflowing.
+     * @param line one line of words (nullable)
+     * @param width target width in columns
+     * @return a string of {@link #displayWidth} == {@code width} (when stretchable)
+     */
+    public static String justifyLine(String line, int width) {
+        if (width <= 0) {
+            return "";
+        }
+        String trimmed = line == null ? "" : line.trim();
+        if (trimmed.isEmpty()) {
+            return repeatChar(' ', width);
+        }
+        String[] words = trimmed.split("\\s+");
+        if (words.length == 1) {
+            return padRightColumns(words[0], width);
+        }
+        int textWidth = 0;
+        for (String w : words) {
+            textWidth += displayWidth(w);
+        }
+        int gaps = words.length - 1;
+        int totalSpaces = width - textWidth;
+        if (totalSpaces < gaps) {
+            // Doesn't even fit with single spaces — caller passed an over-long
+            // line. Fall back to a left-aligned single-spaced join.
+            return padRightColumns(String.join(" ", words), width);
+        }
+        int base = totalSpaces / gaps;
+        int extra = totalSpaces - (base * gaps); // first `extra` gaps get one more
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < words.length; i++) {
+            sb.append(words[i]);
+            if (i < gaps) {
+                sb.append(repeatChar(' ', base + (i < extra ? 1 : 0)));
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Word-wrap {@code text} to {@code width} columns, then full-justify every
+     * line. The final line of each paragraph stays left-aligned unless
+     * {@code justifyLastLine} is true — the standard typographic convention.
+     * @param width wrap + justify width in columns
+     * @param text input (nullable)
+     * @param justifyLastLine also stretch each paragraph's final line
+     * @return justified lines
+     */
+    public static List<String> justify(int width, String text, boolean justifyLastLine) {
+        List<String> wrapped = wordWrap(width, text);
+        if (justifyLastLine) {
+            List<String> out = new ArrayList<>(wrapped.size());
+            for (String line : wrapped) {
+                out.add(justifyLine(line, width));
+            }
+            return out;
+        }
+        // Leave the last line of each paragraph (run up to a blank line or the
+        // end) left-aligned.
+        List<String> out = new ArrayList<>(wrapped.size());
+        for (int i = 0; i < wrapped.size(); i++) {
+            String line = wrapped.get(i);
+            boolean lastOfParagraph = (i == wrapped.size() - 1) || wrapped.get(i + 1).isEmpty();
+            out.add(line.isEmpty() || lastOfParagraph ? line : justifyLine(line, width));
+        }
+        return out;
+    }
+
+    private static String repeatChar(char c, int count) {
+        if (count <= 0) {
+            return "";
+        }
+        char[] buf = new char[count];
+        Arrays.fill(buf, c);
+        return new String(buf);
+    }
+
+    private static String padRightColumns(String s, int width) {
+        int w = displayWidth(s);
+        return w >= width ? s : s + repeatChar(' ', width - w);
     }
 
     private static Integer[] mapCodesToIntegerArray(String[] codes) {
