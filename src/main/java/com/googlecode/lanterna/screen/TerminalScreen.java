@@ -195,6 +195,21 @@ public class TerminalScreen extends AbstractScreen {
                     updateMap.put(new TerminalPosition(x, y), backBufferCharacter);
                 }
                 if(backBufferCharacter.isDoubleWidth()) {
+                    // The trailing (right) half of a double-width glyph lives in
+                    // the next column but is never emitted on its own — the
+                    // 2-cell glyph paints over it, so we skip it below. BUT if
+                    // that trailing cell CHANGED this frame (content scrolled out
+                    // from under a now-wide position), the terminal can keep a
+                    // stale half-glyph/char there: a "floating" ghost the per-cell
+                    // delta never clears, because it sits in the skipped column.
+                    // Re-emit the wide char whenever its trailing cell differs so
+                    // its glyph repaints across BOTH cells and overwrites the ghost
+                    // (cheap: only fires on actual change, not every frame).
+                    if (x + 1 < terminalSize.getColumns()
+                            && !getBackBuffer().getCharacterAt(x + 1, y)
+                                    .equals(getFrontBuffer().getCharacterAt(x + 1, y))) {
+                        updateMap.put(new TerminalPosition(x, y), backBufferCharacter);
+                    }
                     x++;    //Skip the trailing padding
                 } else if (frontBufferCharacter.isDoubleWidth()) {
                     if (x+1 < terminalSize.getColumns()) {
