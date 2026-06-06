@@ -407,18 +407,17 @@ public class TextCharacter implements Serializable {
         if (containsVariationSelector15(character)) {
             return false;
         }
-        // Variation Selector-16 (U+FE0F) requests EMOJI presentation, but the
-        // rendered WIDTH is terminal-dependent. A TEXT-default BMP symbol plus
-        // VS-16 (⚠️ ❤️ ☑️ — base U+26A0 / U+2764 / U+2611) is painted as ONE
-        // column on standard/modern terminals, so forcing it to two over-counts
-        // the row and shoves following text / borders left by a column. Only a
-        // GENUINE emoji base is wide: an astral code point (🏷️ U+1F3F7 + VS-16),
-        // or a BMP code point that already defaults to emoji presentation. The
-        // text-symbol forms stay narrow. (VS-15 above is always narrow.)
+        // Variation Selector-16 (U+FE0F) requests EMOJI presentation, which the
+        // target terminals (iTerm2 &c.) paint as TWO columns — ⚠️ ❤️ ☑️ 🏷️ …
+        // Count it double so Lanterna's cursor advances in step with the
+        // terminal; otherwise the row undercounts and the following text /
+        // border / scrollbar jams (the original "EMOTIKON|" tooth). This is
+        // INDEPENDENT of the bare base glyph: a BARE ⚠ / ● / ▶ (no VS-16) is
+        // text/geometric presentation and stays ONE column (see
+        // TerminalTextUtils.isCharDoubleWidth) — only the VS-16 form widens.
+        // (VS-15 above is always narrow: it explicitly asks for text.)
         if (containsVariationSelector16(character)) {
-            int base = character.codePointAt(0);
-            return Character.charCount(base) > 1                 // astral base = real emoji
-                    || isCharEmojiPresentation(character.charAt(0)); // BMP emoji-presentation base
+            return true;
         }
         // East-Asian *Ambiguous* width (Unicode EAW=A). These code points
         // render as ONE column in Western/default terminals but TWO in

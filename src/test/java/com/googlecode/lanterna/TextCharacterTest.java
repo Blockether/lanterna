@@ -47,14 +47,14 @@ public class TextCharacterTest {
         assertTrue(TextCharacter.fromString("\uD83D\uDC69\uD83C\uDFFD")[0].isDoubleWidth());
         assertTrue(TextCharacter.fromString("\uD83C\uDFE9")[0].isDoubleWidth());
         assertTrue(TextCharacter.fromString("\uD83D\uDC96")[0].isDoubleWidth());
-        assertFalse(TextCharacter.fromString("❤\uFE0F")[0].isDoubleWidth()); // base U+2764 (text-default) + VS-16 -> NARROW
+        assertTrue(TextCharacter.fromString("❤\uFE0F")[0].isDoubleWidth()); // base U+2764 + VS-16 -> WIDE (emoji presentation)
         assertTrue(TextCharacter.fromString("\uD83C\uDFF7\uFE0F")[0].isDoubleWidth()); // 🏷️ terminal-matching override
-        assertFalse(TextCharacter.fromString("\u2611\uFE0F")[0].isDoubleWidth()); // base U+2611 (text-default) + VS-16 -> NARROW
+        assertTrue(TextCharacter.fromString("\u2611\uFE0F")[0].isDoubleWidth()); // base U+2611 + VS-16 -> WIDE (emoji presentation)
         assertTrue(TextCharacter.fromString("\uD83D\uDE0A")[0].isDoubleWidth());
         assertTrue(TextCharacter.fromString("\uD83D\uDC40")[0].isDoubleWidth());
         assertFalse(TextCharacter.fromString("\u2611\uFE0E")[0].isDoubleWidth()); // ☑︎ text presentation
         assertFalse(TextCharacter.fromString("M")[0].isDoubleWidth());  // Not emoji
-        assertFalse(TextCharacter.fromString("⚠️")[0].isDoubleWidth()); // base U+26A0 (text-default) + VS-16 -> NARROW
+        assertTrue(TextCharacter.fromString("⚠️")[0].isDoubleWidth()); // U+26A0 + VS-16 -> WIDE (emoji presentation); bare ⚠ stays narrow below
         assertFalse(TextCharacter.fromString("⚠")[0].isDoubleWidth());       // bare U+26A0 WARNING SIGN -> NARROW (standard width)
         // Media-control triangles (U+25B6 / U+25C0) and disclosure
         // chevrons (U+25B8 / U+25BE) are text-presentation: ONE column.
