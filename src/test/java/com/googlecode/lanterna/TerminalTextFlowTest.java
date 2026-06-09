@@ -110,4 +110,68 @@ public class TerminalTextFlowTest {
             }
         }
     }
+
+    @Test
+    public void foldColumns_passes_through_lines_within_budget() {
+        // A line already within budget is returned byte-for-byte unchanged —
+        // normal multi-line source must not be touched.
+        List<String> lines = TerminalTextUtils.foldColumns(40, "short line");
+        assertEquals(1, lines.size());
+        assertEquals("short line", lines.get(0));
+    }
+
+    @Test
+    public void foldColumns_folds_an_over_wide_line_at_the_edge() {
+        List<String> lines = TerminalTextUtils.foldColumns(10, "abcdefghijklmnopqrstuvwxyz");
+        for (String line : lines) {
+            assertTrue("'" + line + "' fits", TerminalTextUtils.displayWidth(line) <= 10);
+        }
+        // first segment is exactly the budget, content reconstructs verbatim
+        assertEquals("abcdefghij", lines.get(0));
+        StringBuilder joined = new StringBuilder();
+        for (String l : lines) {
+            joined.append(l);
+        }
+        assertEquals("abcdefghijklmnopqrstuvwxyz", joined.toString());
+    }
+
+    @Test
+    public void foldColumns_preserves_whitespace_unlike_wordWrap() {
+        // The whole point vs wordWrap: a one-line JSON-ish arg with leading
+        // indentation and spaces folds WITHOUT reflowing/dropping whitespace.
+        String src = "    {\"message\": \"Fix live tab title\", \"all\": true}";
+        List<String> folded = TerminalTextUtils.foldColumns(20, src);
+        for (String line : folded) {
+            assertTrue(TerminalTextUtils.displayWidth(line) <= 20);
+        }
+        // reconstructs the original byte-for-byte (no whitespace collapse)
+        assertEquals(src, String.join("", folded));
+        // leading indentation survives on the first segment
+        assertTrue(folded.get(0).startsWith("    {"));
+    }
+
+    @Test
+    public void foldColumns_honours_embedded_newlines_and_keeps_blanks() {
+        List<String> lines = TerminalTextUtils.foldColumns(40, "alpha\n\nbeta");
+        assertEquals(3, lines.size());
+        assertEquals("alpha", lines.get(0));
+        assertEquals("", lines.get(1));
+        assertEquals("beta", lines.get(2));
+    }
+
+    @Test
+    public void foldColumns_wide_glyphs_never_overflow_and_never_split_clusters() {
+        List<String> lines = TerminalTextUtils.foldColumns(5, "中文内容测试"); // 6 CJK = 12 cols
+        for (String line : lines) {
+            assertTrue(TerminalTextUtils.displayWidth(line) <= 5);
+        }
+        assertEquals("中文内容测试", String.join("", lines));
+    }
+
+    @Test
+    public void foldColumns_blank_yields_one_empty_line() {
+        assertEquals(1, TerminalTextUtils.foldColumns(10, "").size());
+        assertEquals("", TerminalTextUtils.foldColumns(10, "").get(0));
+        assertEquals(1, TerminalTextUtils.foldColumns(10, null).size());
+    }
 }

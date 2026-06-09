@@ -581,6 +581,47 @@ public class TerminalTextUtils {
     }
 
     /**
+     * Character-fold (terminal-style SOFT WRAP) {@code text} so every returned
+     * line fits within {@code maxColumns} display columns. Unlike
+     * {@link #wordWrap(int, String)} this never reflows or drops whitespace:
+     * the bytes are preserved exactly and a break is inserted only at the
+     * column boundary — always at a grapheme-cluster edge, never mid-cluster.
+     * So source/data indentation and in-row column alignment survive while a
+     * pathologically wide single line (a one-line commit-message arg, a wide
+     * value map) folds at the edge instead of overflowing or being clipped.
+     *
+     * Embedded {@code '\n'} are honoured as hard breaks; a line already within
+     * budget is returned unchanged (so normal multi-line source is untouched
+     * and only the over-wide rows fold). Always returns at least one
+     * (possibly empty) line.
+     *
+     * Plain text only — no notion of inline-style sentinels or ANSI escapes
+     * (use the channel's styled-run wrapper for those).
+     * @param maxColumns fold width in columns; &lt;= 0 returns the input split
+     *                   into lines, unfolded
+     * @param text input (nullable)
+     * @return folded lines, each {@link #displayWidth} &lt;= {@code maxColumns}
+     */
+    public static List<String> foldColumns(int maxColumns, String text) {
+        List<String> out = new ArrayList<>();
+        if (text == null) {
+            text = "";
+        }
+        for (String line : text.split("\n", -1)) {
+            if (maxColumns <= 0 || displayWidth(line) <= maxColumns) {
+                out.add(line);
+            }
+            else {
+                out.addAll(hardSplitColumns(line, maxColumns));
+            }
+        }
+        if (out.isEmpty()) {
+            out.add("");
+        }
+        return out;
+    }
+
+    /**
      * Full-justify the words on a single line to EXACTLY {@code width} display
      * columns by distributing spaces as evenly as possible between them (flush
      * to both margins). A blank line is returned as {@code width} spaces; a
