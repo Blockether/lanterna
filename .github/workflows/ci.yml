@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: ["vis/3.1.5", "main"]
+  pull_request:
+    branches: ["vis/3.1.5", "main"]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: build + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      - name: Build + run tests
+        run: mvn -B -Djacoco.skip=true test

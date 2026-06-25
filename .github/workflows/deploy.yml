@@ -1,0 +1,106 @@
+name: Release & Deploy to Clojars
+
+# Mirror of the Blockether rift-clojure / svar release flow, adapted for this
+# Maven-built Java fork: push a `v*` tag -> set the version from the tag, build
+# the jar, deploy `com.blockether/lanterna` to Clojars, cut a GitHub Release
+# from the commit log, and commit the version bump (pom.xml + VERSION) back.
+#
+# Cut a release:
+#   echo 3.1.5-vis.18 > VERSION && git commit -am "bump VERSION" && \
+#   git tag v3.1.5-vis.18 && git push origin vis/3.1.5 --tags
+#
+# Needs the org/repo secret CLOJARS_DEPLOY_TOKEN (the same one rift/svar use).
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release & Deploy to Clojars
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # The canonical branch this fork releases from (vis-pinned 3.1.5 line).
+          ref: vis/3.1.5
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      - uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+
+      - name: Derive version from tag
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set pom + VERSION to the tag (single source of truth)
+        run: |
+          mvn -q versions:set -DnewVersion="${{ steps.ver.outputs.version }}" -DgenerateBackupPoms=false
+          echo "${{ steps.ver.outputs.version }}" > VERSION
+
+      - name: Skip if this version is already on Clojars
+        id: check
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://repo.clojars.org/com/blockether/lanterna/$V/lanterna-$V.jar")
+          if [ "$STATUS" = "200" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::lanterna $V already on Clojars — skipping deploy"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build jar
+        if: steps.check.outputs.exists != 'true'
+        run: mvn -q -DskipTests -Djacoco.skip=true package
+
+      - name: Deploy to Clojars
+        if: steps.check.outputs.exists != 'true'
+        env:
+          CLOJARS_USERNAME: blockether-deployer
+          CLOJARS_PASSWORD: ${{ secrets.CLOJARS_DEPLOY_TOKEN }}
+        run: clojure -Sdeps '{:deps {slipset/deps-deploy {:mvn/version "0.2.3"}}}' -M deploy_to_clojars.clj
+
+      - name: Generate release notes from the commit log
+        run: |
+          PREV_TAG=$(git tag --sort=-v:refname | head -n 2 | tail -n 1)
+          CUR=${{ github.ref_name }}
+          if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "$CUR" ]; then
+            BODY=$(git log --pretty=format:"- %s (%h)" "$CUR")
+          else
+            BODY=$(git log --pretty=format:"- %s (%h)" "${PREV_TAG}..${CUR}")
+          fi
+          {
+            echo "## What's Changed"
+            echo ""
+            echo "$BODY"
+            echo ""
+            echo "**Clojars**: \`com.blockether/lanterna {:mvn/version \"${{ steps.ver.outputs.version }}\"}\`"
+          } > /tmp/notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          body_path: /tmp/notes.md
+
+      - name: Commit version bump back to vis/3.1.5
+        run: |
+          git config user.name "blockether-deployer"
+          git config user.email "contact@blockether.com"
+          git add pom.xml VERSION
+          git diff --cached --quiet && echo "No version change to commit" || {
+            git commit -m "release: ${{ github.ref_name }}"
+            git push origin HEAD:vis/3.1.5
+          }
