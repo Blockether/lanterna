@@ -509,6 +509,25 @@ public class TextBox extends AbstractInteractableComponent<TextBox> {
         String line = lines.get(caretPosition.getRow());
         boolean lineWasModified = false;
         Result result = null;
+        // Shared Emacs editing chords (C-a/C-e/C-b/C-f/C-p/C-n/C-k/C-u/C-w/C-d) via
+        // the one TextEditKeymap every input uses, so a TextBox behaves like the
+        // host editors that drive TextEditBuffer directly. A non-binding Ctrl chord
+        // falls through to the switch below unchanged.
+        if(TextEditKeymap.isBinding(keyStroke)) {
+            TextEditBuffer edited = TextEditKeymap.apply(
+                    TextEditBuffer.of(lines, caretPosition.getRow(), caretPosition.getColumn()), keyStroke);
+            if(edited != null) {
+                boolean textChanged = !edited.getLines().equals(lines);
+                lines.clear();
+                lines.addAll(edited.getLines());
+                caretPosition = caretPosition.withRow(edited.getRow()).withColumn(edited.getColumn());
+                if(textChanged) {
+                    fireOnTextChanged(true);
+                }
+                invalidate();
+                return Result.HANDLED;
+            }
+        }
         switch(keyStroke.getKeyType()) {
             case Character:
                 if(maxLineLength == -1 || maxLineLength > line.length() + 1) {
