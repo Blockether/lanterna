@@ -27,6 +27,7 @@ import com.googlecode.lanterna.input.KeyType;
  *   C-p  previous-line         C-n  next-line
  *   C-k  kill-to-line-end      C-u  kill-to-line-start
  *   C-w  backward-kill-word    C-d  delete-forward-char
+ *   C-t  transpose-chars
  * </pre>
  *
  * <p>Deliberately a peer of {@link TextEditBuffer} rather than a method on it:
@@ -37,7 +38,7 @@ public final class TextEditKeymap {
     private TextEditKeymap() {}
 
     /** Letters (lowercase) that carry an Emacs editing binding when Ctrl is held. */
-    private static final String BINDINGS = "aebfpnkuwd";
+    private static final String BINDINGS = "aebfpnkuwdt";
 
     /**
      * Apply the Emacs editing chord {@code key} to {@code buffer}, returning the
@@ -60,6 +61,7 @@ public final class TextEditKeymap {
             case 'u': return buffer.killToLineStart();
             case 'w': return buffer.deleteWordBackward();
             case 'd': return buffer.deleteForward();
+            case 't': return buffer.transposeCharacters();
             default:  return null;
         }
     }

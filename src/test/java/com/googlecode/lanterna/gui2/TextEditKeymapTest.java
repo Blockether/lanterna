@@ -82,6 +82,12 @@ public class TextEditKeymapTest {
     }
 
     @Test
+    public void ctrlT_transposesChars() {
+        // Emacs transpose-chars: swap the two characters around the caret.
+        assertEquals("hlelo", TextEditKeymap.apply(buf("hello", 0, 2), ctrl('t')).getText());
+    }
+
+    @Test
     public void uppercaseChordStillBinds() {
         // Shift/Caps must not matter — Ctrl+A and Ctrl+Shift+A both move to start.
         assertEquals(0, TextEditKeymap.apply(buf("hello", 0, 3), new KeyStroke('A', true, false)).getColumn());
