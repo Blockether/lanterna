@@ -417,7 +417,20 @@ public class TextCharacter implements Serializable {
         // TerminalTextUtils.isCharDoubleWidth) — only the VS-16 form widens.
         // (VS-15 above is always narrow: it explicitly asks for text.)
         if (containsVariationSelector16(character)) {
-            return true;
+            if (!APPLE_TERMINAL_WIDTHS) {
+                return true;
+            }
+            // Apple Terminal.app IGNORES the VS-16 emoji-presentation request and
+            // paints the base glyph at its text-presentation width. For a BMP base
+            // (⚠️ ✔️ ☑️ ▶️ ⏺️ ❤️ …) that is the base char's intrinsic width — narrow
+            // unless the base itself is emoji-presentation (⭐️) or CJK/EAW-wide.
+            // Astral-base sequences (🏷️ …) fall through to the shared logic below,
+            // which treats supplementary code points as wide.
+            char appleBase = character.charAt(0);
+            if (!Character.isHighSurrogate(appleBase)) {
+                return TerminalTextUtils.isCharDoubleWidth(appleBase)
+                        || isCharEmojiPresentation(appleBase);
+            }
         }
         // East-Asian *Ambiguous* width (Unicode EAW=A). These code points
         // render as ONE column in Western/default terminals but TWO in
@@ -613,6 +626,39 @@ public class TextCharacter implements Serializable {
     // EAW=A class into wide per-terminal with -Dlanterna.eastAsianAmbiguousWide=true.
     private static final boolean EAW_AMBIGUOUS_WIDE =
             Boolean.getBoolean("lanterna.eastAsianAmbiguousWide");
+
+    // ── Apple Terminal.app width quirk ──────────────────────────────────────
+    // Apple Terminal.app renders VS-16 (U+FE0F) emoji-PRESENTATION sequences at
+    // the base glyph's TEXT-presentation width — ONE column — ignoring the emoji
+    // selector. iTerm2 / Ghostty / Kitty / WezTerm / tmux paint them as TWO
+    // columns (see the VS-16 branch in isDoubleWidth). Trusting the two-column
+    // model on Terminal.app over-advances the cursor after every ⚠️ ✔️ ☑️ ▶️ ⏺️,
+    // so following text merges into the icon and the stale trailing half-cell
+    // shows as a scroll artifact.
+    //
+    // Auto-detected from TERM_PROGRAM; NOT applied inside tmux (TMUX set), where
+    // tmux is the width authority and agrees with the two-column model. Force
+    // either way with -Dlanterna.appleTerminalWidths=true|false.
+    private static volatile boolean APPLE_TERMINAL_WIDTHS = detectAppleTerminalWidths();
+
+    private static boolean detectAppleTerminalWidths() {
+        String override = System.getProperty("lanterna.appleTerminalWidths");
+        if (override != null) {
+            return Boolean.parseBoolean(override);
+        }
+        return "Apple_Terminal".equals(System.getenv("TERM_PROGRAM"))
+                && System.getenv("TMUX") == null;
+    }
+
+    /** Whether Apple Terminal.app width rules are active (VS-16 narrowed). */
+    public static boolean appleTerminalWidths() {
+        return APPLE_TERMINAL_WIDTHS;
+    }
+
+    /** Override the Apple Terminal.app width mode (for tests / embedders). */
+    public static void setAppleTerminalWidths(boolean value) {
+        APPLE_TERMINAL_WIDTHS = value;
+    }
 
     /** Inclusive range bounds (lo, hi pairs) of the curated EAW=A set. */
     private static final int[] EAW_AMBIGUOUS_RANGES = {
