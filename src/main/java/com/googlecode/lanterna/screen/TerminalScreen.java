@@ -26,10 +26,7 @@ import com.googlecode.lanterna.terminal.Terminal;
 import com.googlecode.lanterna.terminal.TerminalResizeListener;
 
 import java.io.IOException;
-import java.util.Comparator;
 import java.util.EnumSet;
-import java.util.Map;
-import java.util.TreeMap;
 
 /**
  * This is the default concrete implementation of the Screen interface, a buffered layer sitting on top of a Terminal.
@@ -181,94 +178,161 @@ public class TerminalScreen extends AbstractScreen {
         finally { scrollHint = null; }
     }
 
+    /**
+     * Cached once: {@code SGR.values()} allocates a fresh array on every call,
+     * and the old delta loop called it (plus {@code getModifiers()}'s defensive
+     * EnumSet copy) PER CELL — tens of thousands of allocations per repaint.
+     */
+    private static final SGR[] ALL_SGRS = SGR.values();
+
+    /**
+     * Streaming emitter for {@link #refreshByDelta()}: collects horizontally
+     * adjacent, same-style changed cells into ONE {@code putString} run instead
+     * of one terminal write per cell. Tracks the physical cursor and the active
+     * fg/bg/SGR state so escapes are only emitted on actual change, exactly like
+     * the old per-cell loop — just per RUN. Nothing (not even the initial
+     * {@code resetColorAndSGR}) is written when no cell changed.
+     */
+    private final class DeltaEmitter {
+        private final StringBuilder run = new StringBuilder(80);
+        private boolean emittedAnything = false;
+        private int cursorColumn = -1;
+        private int cursorRow = -1;
+        private TextColor currentForeground = null;
+        private TextColor currentBackground = null;
+        private EnumSet<SGR> currentSGR = null;
+        private TextCharacter runStyle = null;
+        private int runColumn = -1;
+        private int runRow = -1;
+        private int runWidth = 0;
+
+        void emit(int column, int row, TextCharacter character) throws IOException {
+            int width = character.isDoubleWidth() ? 2 : 1;
+            if(runStyle != null && row == runRow && column == runColumn + runWidth
+                    && character.styleEquals(runStyle)) {
+                run.append(character.getCharacterString());
+                runWidth += width;
+                return;
+            }
+            flushRun();
+            runStyle = character;
+            runColumn = column;
+            runRow = row;
+            runWidth = width;
+            run.append(character.getCharacterString());
+        }
+
+        void flushRun() throws IOException {
+            if(runStyle == null) {
+                return;
+            }
+            if(!emittedAnything) {
+                emittedAnything = true;
+                getTerminal().resetColorAndSGR();
+                currentSGR = EnumSet.noneOf(SGR.class);
+                // colors left null so the first run always sets them explicitly
+            }
+            if(cursorColumn != runColumn || cursorRow != runRow) {
+                getTerminal().setCursorPosition(runColumn, runRow);
+            }
+            if(!runStyle.getForegroundColor().equals(currentForeground)) {
+                getTerminal().setForegroundColor(runStyle.getForegroundColor());
+                currentForeground = runStyle.getForegroundColor();
+            }
+            if(!runStyle.getBackgroundColor().equals(currentBackground)) {
+                getTerminal().setBackgroundColor(runStyle.getBackgroundColor());
+                currentBackground = runStyle.getBackgroundColor();
+            }
+            EnumSet<SGR> wantedSGR = runStyle.getModifiers();   // ONE copy per run
+            if(!wantedSGR.equals(currentSGR)) {
+                for(SGR sgr: ALL_SGRS) {
+                    boolean want = wantedSGR.contains(sgr);
+                    boolean have = currentSGR.contains(sgr);
+                    if(want && !have) {
+                        getTerminal().enableSGR(sgr);
+                    }
+                    else if(!want && have) {
+                        getTerminal().disableSGR(sgr);
+                    }
+                }
+                currentSGR = wantedSGR;
+            }
+            getTerminal().putString(run.toString());
+            cursorColumn = runColumn + runWidth;
+            cursorRow = runRow;
+            run.setLength(0);
+            runStyle = null;
+            runWidth = 0;
+        }
+    }
+
     private void refreshByDelta() throws IOException {
-        Map<TerminalPosition, TextCharacter> updateMap = new TreeMap<>(new ScreenPointComparator());
         TerminalSize terminalSize = getTerminalSize();
+        int rows = terminalSize.getRows();
+        int columns = terminalSize.getColumns();
 
         useScrollHint();
 
-        for(int y = 0; y < terminalSize.getRows(); y++) {
-            for(int x = 0; x < terminalSize.getColumns(); x++) {
+        // Single row-major pass: diff back vs front buffer and stream changed
+        // cells straight into the run emitter. The old implementation staged
+        // every changed cell in a TreeMap<TerminalPosition, TextCharacter>
+        // (boxed key + red-black insert per cell) and then re-diffed style
+        // PER CELL with SGR.values()+getModifiers() copies — on a transcript
+        // shift that was ~10k map inserts and ~90k EnumSet/array allocations
+        // per frame. The emitter preserves the exact wire semantics: cursor
+        // moves only on run breaks, colors/SGR only on change, and the
+        // double-width ghost rules below match the fork's TreeMap-overwrite
+        // behaviour.
+        DeltaEmitter emitter = new DeltaEmitter();
+        for(int y = 0; y < rows; y++) {
+            for(int x = 0; x < columns; ) {
                 TextCharacter backBufferCharacter = getBackBuffer().getCharacterAt(x, y);
                 TextCharacter frontBufferCharacter = getFrontBuffer().getCharacterAt(x, y);
-                if(!backBufferCharacter.equals(frontBufferCharacter)) {
-                    updateMap.put(new TerminalPosition(x, y), backBufferCharacter);
+                if(backBufferCharacter == frontBufferCharacter) {
+                    // Identity fast path: copyTo() after each refresh aliases the
+                    // buffers, so untouched cells are the SAME instance — skip the
+                    // field-by-field equals entirely.
+                    x++;
+                    continue;
                 }
                 if(backBufferCharacter.isDoubleWidth()) {
                     // The trailing (right) half of a double-width glyph lives in
                     // the next column but is never emitted on its own — the
-                    // 2-cell glyph paints over it, so we skip it below. BUT if
-                    // that trailing cell CHANGED this frame (content scrolled out
-                    // from under a now-wide position), the terminal can keep a
-                    // stale half-glyph/char there: a "floating" ghost the per-cell
-                    // delta never clears, because it sits in the skipped column.
-                    // Re-emit the wide char whenever its trailing cell differs so
-                    // its glyph repaints across BOTH cells and overwrites the ghost
-                    // (cheap: only fires on actual change, not every frame).
-                    if (x + 1 < terminalSize.getColumns()
+                    // 2-cell glyph paints over it. BUT if that trailing cell
+                    // CHANGED this frame (content scrolled out from under a
+                    // now-wide position), the terminal can keep a stale
+                    // half-glyph ghost there, so re-emit the wide char whenever
+                    // its trailing cell differs.
+                    boolean trailingChanged = x + 1 < columns
                             && !getBackBuffer().getCharacterAt(x + 1, y)
-                                    .equals(getFrontBuffer().getCharacterAt(x + 1, y))) {
-                        updateMap.put(new TerminalPosition(x, y), backBufferCharacter);
+                                    .equals(getFrontBuffer().getCharacterAt(x + 1, y));
+                    if(trailingChanged || !backBufferCharacter.equals(frontBufferCharacter)) {
+                        emitter.emit(x, y, backBufferCharacter);
                     }
-                    x++;    //Skip the trailing padding
-                } else if (frontBufferCharacter.isDoubleWidth()) {
-                    if (x+1 < terminalSize.getColumns()) {
-                        updateMap.put(new TerminalPosition(x+1, y), frontBufferCharacter.withCharacter(' '));
+                    x += 2;    // Skip the trailing padding
+                    continue;
+                }
+                boolean changed = !backBufferCharacter.equals(frontBufferCharacter);
+                if(changed) {
+                    emitter.emit(x, y, backBufferCharacter);
+                }
+                if(frontBufferCharacter.isDoubleWidth() && x + 1 < columns) {
+                    // Front was double-width here but back is narrow: the glyph's
+                    // stale right half can survive in column x+1. If that cell
+                    // repaints anyway (back != front there) the normal emission
+                    // handles it next iteration; otherwise blank the ghost with
+                    // a space in the old glyph's style.
+                    if(getBackBuffer().getCharacterAt(x + 1, y)
+                            .equals(getFrontBuffer().getCharacterAt(x + 1, y))) {
+                        emitter.emit(x + 1, y, frontBufferCharacter.withCharacter(' '));
+                        x += 2;
+                        continue;
                     }
                 }
+                x++;
             }
         }
-
-        if(updateMap.isEmpty()) {
-            return;
-        }
-        TerminalPosition currentPosition = updateMap.keySet().iterator().next();
-        getTerminal().setCursorPosition(currentPosition.getColumn(), currentPosition.getRow());
-
-        TextCharacter firstScreenCharacterToUpdate = updateMap.values().iterator().next();
-        EnumSet<SGR> currentSGR = firstScreenCharacterToUpdate.getModifiers();
-        getTerminal().resetColorAndSGR();
-        for(SGR sgr: currentSGR) {
-            getTerminal().enableSGR(sgr);
-        }
-        TextColor currentForegroundColor = firstScreenCharacterToUpdate.getForegroundColor();
-        TextColor currentBackgroundColor = firstScreenCharacterToUpdate.getBackgroundColor();
-        getTerminal().setForegroundColor(currentForegroundColor);
-        getTerminal().setBackgroundColor(currentBackgroundColor);
-        for(TerminalPosition position: updateMap.keySet()) {
-            if(!position.equals(currentPosition)) {
-                getTerminal().setCursorPosition(position.getColumn(), position.getRow());
-                currentPosition = position;
-            }
-            TextCharacter newCharacter = updateMap.get(position);
-            if(!currentForegroundColor.equals(newCharacter.getForegroundColor())) {
-                getTerminal().setForegroundColor(newCharacter.getForegroundColor());
-                currentForegroundColor = newCharacter.getForegroundColor();
-            }
-            if(!currentBackgroundColor.equals(newCharacter.getBackgroundColor())) {
-                getTerminal().setBackgroundColor(newCharacter.getBackgroundColor());
-                currentBackgroundColor = newCharacter.getBackgroundColor();
-            }
-            for(SGR sgr: SGR.values()) {
-                if(currentSGR.contains(sgr) && !newCharacter.getModifiers().contains(sgr)) {
-                    getTerminal().disableSGR(sgr);
-                    currentSGR.remove(sgr);
-                }
-                else if(!currentSGR.contains(sgr) && newCharacter.getModifiers().contains(sgr)) {
-                    getTerminal().enableSGR(sgr);
-                    currentSGR.add(sgr);
-                }
-            }
-            getTerminal().putString(newCharacter.getCharacterString());
-            if(newCharacter.isDoubleWidth()) {
-                // Double-width characters advances two columns
-                currentPosition = currentPosition.withRelativeColumn(2);
-            }
-            else {
-                // Normal characters advances one column
-                currentPosition = currentPosition.withRelativeColumn(1);
-            }
-        }
+        emitter.flushRun();
     }
 
 
@@ -404,20 +468,6 @@ public class TerminalScreen extends AbstractScreen {
         }
     }
 
-    private static class ScreenPointComparator implements Comparator<TerminalPosition> {
-        @Override
-        public int compare(TerminalPosition o1, TerminalPosition o2) {
-            if(o1.getRow() == o2.getRow()) {
-                if(o1.getColumn() == o2.getColumn()) {
-                    return 0;
-                } else {
-                    return Integer.compare(o1.getColumn(), o2.getColumn());
-                }
-            } else {
-                return Integer.compare(o1.getRow(), o2.getRow());
-            }
-        }
-    }
 
     private static class ScrollHint {
         public static final ScrollHint INVALID = new ScrollHint(-1,-1,0);

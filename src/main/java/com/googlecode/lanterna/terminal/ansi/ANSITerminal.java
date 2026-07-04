@@ -433,6 +433,12 @@ public abstract class ANSITerminal extends StreamBasedTerminal implements Extend
 
     void reportPosition() throws IOException {
         writeCSISequenceToTerminal("6n".getBytes());
+        // The callers (findTerminalSize / getCursorPosition) BLOCK waiting for
+        // the terminal's reply, up to a 5s timeout. On a raw stream the query
+        // escaped immediately, but behind a buffering OutputStream it would sit
+        // in the buffer and every size probe would stall to the timeout — flush
+        // the query out explicitly.
+        flush();
     }
 
     void restoreCursorPosition() throws IOException {

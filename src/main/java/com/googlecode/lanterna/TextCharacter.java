@@ -261,6 +261,20 @@ public class TextCharacter implements Serializable {
     }
 
     /**
+     * Style-only equality: colors + SGR modifiers, ignoring the character
+     * itself. Lets {@code TerminalScreen}'s delta refresh batch horizontally
+     * adjacent same-style cells into one terminal write WITHOUT paying
+     * {@link #getModifiers()}'s defensive {@code EnumSet} copy per cell.
+     * @param other Character to compare styling against
+     * @return {@code true} if both characters paint with the same colors and modifiers
+     */
+    public boolean styleEquals(TextCharacter other) {
+        return foregroundColor.equals(other.foregroundColor)
+                && backgroundColor.equals(other.backgroundColor)
+                && modifiers.equals(other.modifiers);
+    }
+
+    /**
      * Returns true if this TextCharacter has the bold modifier active
      * @return {@code true} if this TextCharacter has the bold modifier active
      */
