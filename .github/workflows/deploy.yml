@@ -7,7 +7,7 @@ name: Release & Deploy to Clojars
 #
 # Cut a release:
 #   echo 3.1.5-vis.18 > VERSION && git commit -am "bump VERSION" && \
-#   git tag v3.1.5-vis.18 && git push origin vis/3.1.5 --tags
+#   git tag v3.1.5-vis.18 && git push origin main --tags
 #
 # Needs the org/repo secret CLOJARS_DEPLOY_TOKEN (the same one rift/svar use).
 
@@ -25,8 +25,8 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          # The canonical branch this fork releases from (vis-pinned 3.1.5 line).
-          ref: vis/3.1.5
+          # The canonical branch this fork releases from.
+          ref: main
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -95,12 +95,12 @@ jobs:
         with:
           body_path: /tmp/notes.md
 
-      - name: Commit version bump back to vis/3.1.5
+      - name: Commit version bump back to main
         run: |
           git config user.name "blockether-deployer"
           git config user.email "contact@blockether.com"
           git add pom.xml VERSION
           git diff --cached --quiet && echo "No version change to commit" || {
             git commit -m "release: ${{ github.ref_name }}"
-            git push origin HEAD:vis/3.1.5
+            git push origin HEAD:main
           }
