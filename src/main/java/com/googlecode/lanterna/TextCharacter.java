@@ -72,12 +72,9 @@ public class TextCharacter implements Serializable {
             EnumSet<SGR> modifiers) {
 
         int length = string.length();
-        // ASCII fast path: every code point < 0x80 is its own grapheme (ASCII
-        // has no combining marks or surrogates), so we can slice per-char and
-        // skip the BreakIterator + its setText allocation entirely. This is the
-        // overwhelmingly common case (code, prose, box-drawing is handled in
-        // the isAscii check below by the >= 0x80 bail). Measured as the top
-        // render-path allocator before this.
+        // ASCII fast path: every code point < 0x80 is its own grapheme (no
+        // combining marks or surrogates), so slice per-char and skip the
+        // BreakIterator entirely. This is the overwhelmingly common case.
         if (isAscii(string, length)) {
             TextCharacter[] out = new TextCharacter[length];
             for (int i = 0; i < length; i++) {
@@ -85,13 +82,10 @@ public class TextCharacter implements Serializable {
             }
             return out;
         }
-        // Drain the grapheme boundaries into substrings FIRST, then construct.
-        // The TextCharacter constructor calls validateSingleCharacter, which
-        // uses the SAME thread-local grapheme iterator — so constructing WHILE
-        // iterating would setText() out from under this loop and corrupt the
-        // split (it silently merged multi-char emoji graphemes). Finishing the
-        // traversal before any construction keeps the single shared iterator
-        // safe and still avoids the per-call getCharacterInstance() allocation.
+        // Drain the grapheme boundaries into substrings FIRST, then construct:
+        // the constructor's validateSingleCharacter uses the SAME thread-local
+        // iterator, so constructing mid-traversal would setText() out from
+        // under this loop and corrupt the split (merging emoji graphemes).
         BreakIterator breakIterator = GRAPHEME_ITERATOR.get();
         breakIterator.setText(string);
         List<String> graphemes = new ArrayList<>();
@@ -123,21 +117,15 @@ public class TextCharacter implements Serializable {
     private final TextColor backgroundColor;
     private final EnumSet<SGR> modifiers;  //This isn't immutable, but we should treat it as such and not expose it!
     // Lazily-memoized isDoubleWidth() result: 0=unknown, 1=narrow, 2=wide. The
-    // width is a pure function of the immutable `character`, but it used to be
-    // recomputed on EVERY isDoubleWidth() call (a Character.UnicodeBlock.of
-    // binary search + emoji/CJK probes) — and that runs per cell BOTH when the
-    // char is written into the buffer AND again per changed cell during the
-    // delta refresh, i.e. thousands of times per frame on a scroll. Cache it.
-    // A plain byte: writes are atomic and the result is deterministic, so the
-    // benign cross-thread race (two threads compute the same value once) is
-    // safe — the String.hashCode idiom.
+    // width is a pure function of the immutable character but was recomputed on
+    // every call (a Character.UnicodeBlock.of search), which runs per cell on
+    // buffer write AND again per changed cell during the delta refresh. A plain
+    // byte is safe under the benign compute-once race (String.hashCode idiom).
     private byte doubleWidthCache = 0;
 
-    // ONE grapheme BreakIterator per thread, reused. BreakIterator.getCharacterInstance()
-    // is expensive (locale lookup + rule table) and was allocated fresh on
-    // every fromString() AND every constructor (validateSingleCharacter), which
-    // the allocation profiler flagged as the single largest source of garbage
-    // in the render path. BreakIterator is not thread-safe, hence ThreadLocal.
+    // One grapheme BreakIterator per thread, reused: getCharacterInstance() is
+    // expensive and was allocated fresh on every fromString() and constructor.
+    // Not thread-safe, hence ThreadLocal.
     private static final ThreadLocal<BreakIterator> GRAPHEME_ITERATOR =
             ThreadLocal.withInitial(BreakIterator::getCharacterInstance);
 
@@ -252,12 +240,9 @@ public class TextCharacter implements Serializable {
     }
 
     private void validateSingleCharacter(String character) {
-        // Fast path: a single UTF-16 unit that is NOT a surrogate is always
-        // exactly one grapheme — no BreakIterator needed. This is virtually
-        // every TextCharacter (ASCII + BMP), and it used to allocate + drive a
-        // fresh grapheme BreakIterator on every single construction. Only
-        // multi-unit strings (surrogate pairs, combining marks, ZWJ/VS emoji)
-        // need real grapheme segmentation.
+        // Fast path: a single non-surrogate UTF-16 unit is always exactly one
+        // grapheme — no BreakIterator needed (virtually every TextCharacter).
+        // Only multi-unit strings (surrogates, combining marks, emoji) need it.
         if (character.length() == 1 && !Character.isSurrogate(character.charAt(0))) {
             return;
         }
