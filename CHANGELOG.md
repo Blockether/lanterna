@@ -1,5 +1,49 @@
 # Changelog
 
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<!-- Blockether vis fork — see the `## Blockether fork` section below.     -->
+<!-- ══════════════════════════════════════════════════════════════════ -->
+
+## Blockether fork
+
+> `com.blockether:lanterna` — a **superset** of `mabe02/lanterna 3.1.5`.
+> This started life as a minimal two-cherry-pick emoji fix; it is now a
+> materially larger fork carrying its own display-width engine **and** an
+> inline-image subsystem. Drop-in for `com.googlecode.lanterna:lanterna:3.1.5`
+> (same packages/classes) plus one added package.
+
+### `3.1.5-vis.23`
+
+- **New: inline terminal images** — `com.googlecode.lanterna.terminal.image.TerminalImage`
+  (Blockether-original). A static, thread-safe, headless-safe, JDK-8 utility:
+  - **Graphics-capability detection** — `detectCapabilities(env)` sniffs the
+    inline-image `Protocol` (`KITTY` for kitty/Ghostty/WezTerm/Warp, `ITERM2`
+    for iTerm2) from the environment; tmux/screen report none (they mangle
+    pass-through). `isGraphicalTerminal()` / `isGraphicalTerminal(env)` collapse
+    that to a boolean so callers can branch **graphical vs non-graphical**
+    terminals and fall back to a text card.
+  - **Intrinsic pixel-dimension sniffing** — `imageDimensions` / `probeDimensions`
+    read only a file head to get `[w,h]` for png/jpeg/gif/webp/bmp (no full decode).
+  - **Aspect-preserving cell-box sizing** — `cellSize`, using the reported
+    terminal cell pixel size (`setCellDimensions`).
+  - **Escape encoding** — `encodeKitty` (with 4096-byte `m=0/1` chunking) and
+    `encodeIterm2`, plus `readBase64` and `transcodePngBase64` (AWT/ImageIO,
+    Kitty `f=100` is PNG-only), each mtime+size cached so a scroll that
+    re-emits an image doesn't re-read/re-encode.
+  - Ported from vis's `terminal-image.clj` (itself a port of pi's
+    `terminal-image.ts`); vis now delegates to this class.
+  - Correctness + performance covered by `TerminalImageTest` and
+    `TerminalImageBenchmarkTest` (`src/test`).
+- Display-width engine (from earlier `vis.*` builds): PR #625 emoji rendering,
+  BMP `Emoji_Presentation=Yes` + astral emoji = 2 cols, VS-15/VS-16 handling,
+  geometric/symbol glyphs = 1 col, EAW=A narrow by default, EAW=W/F table,
+  control-char degradation, scroll-ghost fix, `TerminalTextUtils` text-flow
+  helpers (`foldColumns`), and Apple Terminal.app width mode.
+
+---
+
+
+
 ## Table of contents
 * [**3.0.0**](#3.0.0)
 * [2.1.9](#2.1.9)
