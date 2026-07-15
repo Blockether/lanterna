@@ -892,6 +892,191 @@ public class TerminalTextUtils {
         return out;
     }
 
+    /**
+     * Pad {@code s} on the RIGHT with spaces so it occupies exactly
+     * {@code width} display columns. A string already exactly {@code width}
+     * wide is returned as-is; one WIDER than {@code width} is column-truncated
+     * (grapheme-safe) to fit.
+     * @param s string to pad (nullable, treated as empty)
+     * @param width target width in columns
+     * @return a string of {@link #displayWidth} == {@code width}
+     */
+    public static String padRight(String s, int width) {
+        String txt = s == null ? "" : s;
+        int cols = displayWidth(txt);
+        if (cols == width) {
+            return txt;
+        }
+        if (cols > width) {
+            return truncateColumns(txt, width);
+        }
+        return txt + repeatChar(' ', width - cols);
+    }
+
+    /**
+     * Pad {@code s} on the LEFT with spaces so it occupies exactly {@code width}
+     * display columns (right-aligned). Over-wide input is column-truncated.
+     * @param s string to pad (nullable, treated as empty)
+     * @param width target width in columns
+     * @return a string of {@link #displayWidth} == {@code width}
+     */
+    public static String padLeft(String s, int width) {
+        String txt = s == null ? "" : s;
+        int cols = displayWidth(txt);
+        if (cols == width) {
+            return txt;
+        }
+        if (cols > width) {
+            return truncateColumns(txt, width);
+        }
+        return repeatChar(' ', width - cols) + txt;
+    }
+
+    /**
+     * Center {@code s} within {@code width} display columns, padding both sides
+     * with spaces (extra odd column goes to the RIGHT). Over-wide input is
+     * column-truncated.
+     * @param s string to center (nullable, treated as empty)
+     * @param width target width in columns
+     * @return a string of {@link #displayWidth} == {@code width}
+     */
+    public static String center(String s, int width) {
+        String txt = s == null ? "" : s;
+        int cols = displayWidth(txt);
+        if (cols >= width) {
+            return truncateColumns(txt, width);
+        }
+        int leftPad = (width - cols) / 2;
+        int rightPad = width - cols - leftPad;
+        return repeatChar(' ', leftPad) + txt + repeatChar(' ', rightPad);
+    }
+
+    /**
+     * Shorten {@code s} to at most {@code maxCols} display columns by ELIDING
+     * THE MIDDLE behind a single {@code '…'}, keeping both the HEAD and the
+     * TAIL. Ideal for file paths, where the basename (tail) is as informative
+     * as the leading dirs. Falls back to plain head truncation when there
+     * isn't room for both sides plus the ellipsis. Grapheme-cluster safe.
+     * @param s string to shorten (nullable → {@code ""})
+     * @param maxCols column budget; &lt;= 0 → {@code ""}
+     * @return the middle-elided string, {@link #displayWidth} &lt;= {@code maxCols}
+     */
+    public static String truncateMiddle(String s, int maxCols) {
+        if (s == null || maxCols <= 0) {
+            return "";
+        }
+        if (displayWidth(s) <= maxCols) {
+            return s;
+        }
+        if (maxCols <= 2) {
+            return truncateColumns(s, maxCols);
+        }
+        int budget = maxCols - 1; // one column spent on the ellipsis
+        int tailCols = budget / 2;
+        int headCols = budget - tailCols;
+        String head = truncateColumns(s, headCols);
+        TextCharacter[] cells = TextCharacter.fromString(s);
+        StringBuilder tail = new StringBuilder();
+        int used = 0;
+        for (int i = cells.length - 1; i >= 0; i--) {
+            TextCharacter tc = cells[i];
+            int w = tc.isDoubleWidth() ? 2 : 1;
+            if (used + w > tailCols) {
+                break;
+            }
+            tail.insert(0, tc.getCharacterString());
+            used += w;
+        }
+        return head + "…" + tail;
+    }
+
+    /**
+     * Distribute {@code items} across {@code width} display columns with equal
+     * gaps: first item flush-left, last flush-right, the rest evenly spaced
+     * (CSS {@code justify-content: space-between}). One item is centered; none
+     * yields {@code width} spaces. Gaps are never smaller than one column.
+     * @param items segments to distribute (each nullable → empty)
+     * @param width total width in columns
+     * @return the laid-out row
+     */
+    public static String spaceBetween(List<String> items, int width) {
+        int n = items.size();
+        if (n == 0) {
+            return repeatChar(' ', width);
+        }
+        if (n == 1) {
+            return center(items.get(0), width);
+        }
+        int totalText = 0;
+        for (String it : items) {
+            totalText += displayWidth(it);
+        }
+        int totalGaps = width - totalText;
+        int gapCount = n - 1;
+        int baseGap = Math.max(1, totalGaps / gapCount);
+        int extra = totalGaps - (baseGap * gapCount); // first `extra` gaps get one more
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < n; i++) {
+            sb.append(items.get(i) == null ? "" : items.get(i));
+            if (i < gapCount) {
+                sb.append(repeatChar(' ', baseGap + (i < extra ? 1 : 0)));
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Distribute {@code items} across {@code width} display columns with equal
+     * space AROUND each item (CSS {@code justify-content: space-around}). One
+     * item is centered; none yields {@code width} spaces. The result is padded
+     * or column-truncated to land on exactly {@code width}.
+     * @param items segments to distribute (each nullable → empty)
+     * @param width total width in columns
+     * @return the laid-out row, {@link #displayWidth} == {@code width}
+     */
+    public static String spaceAround(List<String> items, int width) {
+        int n = items.size();
+        if (n == 0) {
+            return repeatChar(' ', width);
+        }
+        if (n == 1) {
+            return center(items.get(0), width);
+        }
+        int totalText = 0;
+        for (String it : items) {
+            totalText += displayWidth(it);
+        }
+        int totalGaps = width - totalText;
+        int slots = 2 * n; // each item gets space on both sides
+        int base = Math.max(0, totalGaps / slots);
+        String unitGap = repeatChar(' ', base);
+        StringBuilder sb = new StringBuilder();
+        for (String it : items) {
+            sb.append(unitGap).append(it == null ? "" : it).append(unitGap);
+        }
+        String result = sb.toString();
+        int resultW = displayWidth(result);
+        if (resultW == width) {
+            return result;
+        }
+        if (resultW < width) {
+            return result + repeatChar(' ', width - resultW);
+        }
+        return truncateColumns(result, width);
+    }
+
+    /**
+     * Vertical offset that centers {@code contentH} rows within a
+     * {@code containerH}-row region — {@code 0} when the content is at least as
+     * tall as the container.
+     * @param contentH content height in rows
+     * @param containerH container height in rows
+     * @return the top offset in rows
+     */
+    public static int verticalCenterOffset(int contentH, int containerH) {
+        return contentH < containerH ? (containerH - contentH) / 2 : 0;
+    }
+
     private static String repeatChar(char c, int count) {
         if (count <= 0) {
             return "";

@@ -12,6 +12,17 @@
 > inline-image subsystem. Drop-in for `com.googlecode.lanterna:lanterna:3.1.5`
 > (same packages/classes) plus one added package.
 
+### `3.1.5-vis.25`
+
+- **New: column-aware layout helpers** in `TerminalTextUtils` (Blockether-
+  original), the same grapheme/EAW-aware text-flow family as `displayWidth` /
+  `wordWrap` / `justify`: `padRight` / `padLeft` / `center` (pad-or-truncate to
+  an exact column width), `truncateMiddle` (elide the middle of a path keeping
+  head+tail behind a single `…`), `spaceBetween` / `spaceAround` (distribute
+  items across a width, CSS-style), and `verticalCenterOffset`. Moves the TUI's
+  pure column arithmetic out of Clojure into shared, allocation-light Java so
+  one implementation backs both — measured the way the screen paints.
+
 ### `3.1.5-vis.24`
 
 - **New: grapheme-cluster column measurement** in `TerminalTextUtils`
