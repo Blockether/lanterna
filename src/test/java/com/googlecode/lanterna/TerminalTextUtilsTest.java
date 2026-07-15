@@ -23,6 +23,7 @@ import org.junit.Test;
 
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
 
 public class TerminalTextUtilsTest {
     @Test
@@ -288,6 +289,158 @@ public class TerminalTextUtilsTest {
         assertEquals("Incorrect word wrapping - break between CJK and latin",
                 Arrays.asList("aあ","bc"),
                 TerminalTextUtils.getWordWrappedText(3, "aあbc"));
+    }
+
+    // ------------------------------------------------------------------
+    // vis-added column-layout helpers (3.1.5-vis.24..26)
+    // grapheme/EAW-aware measurement, padding, ellipsize, ANSI fold/slice.
+    // "\u3042" (HIRAGANA A) is a 2-column CJK glyph used throughout below.
+    // ------------------------------------------------------------------
+
+    private static String stripAnsi(String s) {
+        return s.replaceAll("\u001b\\[[0-9;]*m", "");
+    }
+
+    private static int visibleColumns(String s) {
+        return TerminalTextUtils.displayColumns(stripAnsi(s));
+    }
+
+    @Test
+    public void sanitizeControlChars_replacesC0AndKeepsCleanIdentity() {
+        String clean = "hello world";
+        assertSame("clean string returned unchanged (same identity)",
+                clean, TerminalTextUtils.sanitizeControlChars(clean));
+        assertEquals("tab and newline replaced with '/'",
+                "a/b/c", TerminalTextUtils.sanitizeControlChars("a\tb\nc"));
+        assertEquals("leading control byte replaced",
+                "/x", TerminalTextUtils.sanitizeControlChars("\u0001x"));
+    }
+
+    @Test
+    public void displayColumns_countsAsciiCjkAndNull() {
+        assertEquals(0, TerminalTextUtils.displayColumns(null));
+        assertEquals(0, TerminalTextUtils.displayColumns(""));
+        assertEquals(5, TerminalTextUtils.displayColumns("hello"));
+        assertEquals("one CJK glyph is two columns", 2, TerminalTextUtils.displayColumns("\u3042"));
+        assertEquals("mixed ascii + CJK", 4, TerminalTextUtils.displayColumns("a\u3042b"));
+    }
+
+    @Test
+    public void columnPrefixLength_fitsWithoutSplittingGraphemes() {
+        assertEquals(0, TerminalTextUtils.columnPrefixLength("hello", 0));
+        assertEquals(3, TerminalTextUtils.columnPrefixLength("hello", 3));
+        assertEquals(5, TerminalTextUtils.columnPrefixLength("hello", 99));
+        // "\u3042\u3044" = 4 cols; budget 3 fits only the first 2-col glyph (1 char)
+        assertEquals(1, TerminalTextUtils.columnPrefixLength("\u3042\u3044", 3));
+    }
+
+    @Test
+    public void truncateColumns_padsWhenDoubleWidthStraddlesTheCut() {
+        assertEquals("", TerminalTextUtils.truncateColumns("x", 0));
+        assertEquals("hello", TerminalTextUtils.truncateColumns("hello", 99));
+        assertEquals("hel", TerminalTextUtils.truncateColumns("hello", 3));
+        // "\u3042\u3044" budget 3: first glyph fits (2 cols), second would straddle ->
+        // dropped and one space appended so the result is exactly 3 columns wide.
+        String t = TerminalTextUtils.truncateColumns("\u3042\u3044", 3);
+        assertEquals("\u3042 ", t);
+        assertEquals(3, TerminalTextUtils.displayColumns(t));
+    }
+
+    @Test
+    public void ellipsize_appendsMarkerOnlyWhenTruncated() {
+        assertEquals("fits untouched", "hello", TerminalTextUtils.ellipsize("hello", 10, "\u2026"));
+        assertEquals("marker charged against budget", "he\u2026",
+                TerminalTextUtils.ellipsize("hello", 3, "\u2026"));
+        assertEquals("", TerminalTextUtils.ellipsize("hello", 0, "\u2026"));
+        // marker wider than the whole budget -> marker itself is truncated to fit
+        String tiny = TerminalTextUtils.ellipsize("hello world", 2, "...");
+        assertEquals(2, TerminalTextUtils.displayColumns(tiny));
+    }
+
+    @Test
+    public void padRight_padLeft_center_landOnExactWidth() {
+        assertEquals("hi   ", TerminalTextUtils.padRight("hi", 5));
+        assertEquals("   hi", TerminalTextUtils.padLeft("hi", 5));
+        assertEquals("extra odd column goes right", " hi  ", TerminalTextUtils.center("hi", 5));
+        assertEquals("over-wide input is truncated", "hel", TerminalTextUtils.padRight("hello", 3));
+        assertEquals("CJK-aware padding stays on grid",
+                5, TerminalTextUtils.displayColumns(TerminalTextUtils.padRight("\u3042", 5)));
+    }
+
+    @Test
+    public void truncateMiddle_keepsHeadAndTailBehindEllipsis() {
+        assertEquals("fits untouched", "/very/long/path",
+                TerminalTextUtils.truncateMiddle("/very/long/path", 99));
+        String r = TerminalTextUtils.truncateMiddle("/aaa/bbb/ccc/name.txt", 12);
+        assertTrue("within column budget", TerminalTextUtils.displayColumns(r) <= 12);
+        assertTrue("has middle ellipsis", r.contains("\u2026"));
+        assertTrue("keeps head", r.startsWith("/aaa"));
+        assertTrue("keeps informative tail", r.endsWith(".txt"));
+    }
+
+    @Test
+    public void spaceBetween_flushesBothMargins() {
+        String r = TerminalTextUtils.spaceBetween(Arrays.asList("a", "b"), 5);
+        assertEquals("a   b", r);
+        assertEquals(5, TerminalTextUtils.displayColumns(r));
+        assertEquals("empty list -> all spaces",
+                "     ", TerminalTextUtils.spaceBetween(Collections.<String>emptyList(), 5));
+        assertEquals("single item is centered",
+                TerminalTextUtils.center("x", 5), TerminalTextUtils.spaceBetween(Collections.singletonList("x"), 5));
+    }
+
+    @Test
+    public void spaceAround_landsOnExactWidth() {
+        String r = TerminalTextUtils.spaceAround(Arrays.asList("a", "b", "c"), 9);
+        assertEquals(9, TerminalTextUtils.displayColumns(r));
+        assertEquals("single item is centered",
+                TerminalTextUtils.center("x", 5), TerminalTextUtils.spaceAround(Collections.singletonList("x"), 5));
+    }
+
+    @Test
+    public void verticalCenterOffset_centersOrClampsToZero() {
+        assertEquals(2, TerminalTextUtils.verticalCenterOffset(6, 10));
+        assertEquals(0, TerminalTextUtils.verticalCenterOffset(10, 10));
+        assertEquals(0, TerminalTextUtils.verticalCenterOffset(12, 10));
+    }
+
+    @Test
+    public void ansiFoldColumns_plainTextFoldsLikeFoldColumns() {
+        assertEquals(TerminalTextUtils.foldColumns(3, "abcdef"),
+                TerminalTextUtils.ansiFoldColumns(3, "abcdef"));
+        assertEquals(Collections.singletonList(""), TerminalTextUtils.ansiFoldColumns(3, null));
+    }
+
+    @Test
+    public void ansiFoldColumns_reopensColorAcrossBreak() {
+        List<String> segs = TerminalTextUtils.ansiFoldColumns(3, "\u001b[31mABCDEF\u001b[0m");
+        assertTrue("folds into more than one row", segs.size() >= 2);
+        StringBuilder visible = new StringBuilder();
+        for (String seg : segs) {
+            assertTrue("each segment fits the column budget", visibleColumns(seg) <= 3);
+            visible.append(stripAnsi(seg));
+        }
+        assertEquals("no visible characters lost", "ABCDEF", visible.toString());
+        assertTrue("continuation row re-opens the active SGR color",
+                segs.get(1).startsWith("\u001b[31m"));
+    }
+
+    @Test
+    public void ansiSliceColumns_plainWindowIsGraphemeSafe() {
+        assertEquals("", TerminalTextUtils.ansiSliceColumns("hello", 0, 0));
+        assertEquals("hel", TerminalTextUtils.ansiSliceColumns("hello", 0, 3));
+        assertEquals("llo", TerminalTextUtils.ansiSliceColumns("hello", 2, 3));
+        assertEquals("negative start clamps to 0", "he", TerminalTextUtils.ansiSliceColumns("hello", -5, 2));
+        // CJK never split: window [0,3) over "\u3042\u3044" keeps the first 2-col glyph only
+        assertEquals("\u3042", TerminalTextUtils.ansiSliceColumns("\u3042\u3044", 0, 3));
+    }
+
+    @Test
+    public void ansiSliceColumns_reopensColorAtWindowLeftEdge() {
+        String r = TerminalTextUtils.ansiSliceColumns("\u001b[31mABCDEF\u001b[0m", 2, 2);
+        assertEquals("visible window content", "CD", stripAnsi(r));
+        assertTrue("re-opens red at the window head", r.startsWith("\u001b[31m"));
+        assertTrue("closes with a reset", r.endsWith("\u001b[0m"));
     }
 
     // Add a test for traditional Chinese characters here? If someone can contribute a list! The list of simplified
