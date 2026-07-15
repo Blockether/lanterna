@@ -12,6 +12,15 @@
 > inline-image subsystem. Drop-in for `com.googlecode.lanterna:lanterna:3.1.5`
 > (same packages/classes) plus one added package.
 
+### `3.1.5-vis.27`
+
+- **New: `TerminalTextUtils.clamp`** (Blockether-original) — a public
+  canonical range clamp, `clamp(int,int,int)` + a `long` overload, for
+  layout / scroll coordinate math. `Math.min`/lower-bound in one call;
+  `gui2.TextEditBuffer` now delegates its private clamp here. Lets
+  downstreams (vis channel-tui `primitives/clamp`) reuse one primitive
+  implementation instead of re-rolling it per namespace.
+
 ### `3.1.5-vis.26`
 
 - **New: ANSI-SGR-aware column fold/slice** in `TerminalTextUtils` (Blockether-

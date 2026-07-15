@@ -352,10 +352,7 @@ public final class TextEditBuffer {
     }
 
     private static int clamp(int value, int low, int high) {
-        if (value < low) {
-            return low;
-        }
-        return Math.min(value, high);
+        return com.googlecode.lanterna.TerminalTextUtils.clamp(value, low, high);
     }
 
     @Override

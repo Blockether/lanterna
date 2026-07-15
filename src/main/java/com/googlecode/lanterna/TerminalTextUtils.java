@@ -1237,6 +1237,29 @@ public class TerminalTextUtils {
         return contentH < containerH ? (containerH - contentH) / 2 : 0;
     }
 
+    /**
+     * Clamps {@code value} into the inclusive range {@code [low, high]}. The one
+     * canonical range clamp for layout / scroll coordinate math.
+     * @param value value to clamp
+     * @param low inclusive lower bound
+     * @param high inclusive upper bound
+     * @return {@code low} if {@code value < low}, {@code high} if {@code value > high}, else {@code value}
+     */
+    public static int clamp(int value, int low, int high) {
+        return value < low ? low : Math.min(value, high);
+    }
+
+    /**
+     * Clamps {@code value} into the inclusive range {@code [low, high]} (long overload).
+     * @param value value to clamp
+     * @param low inclusive lower bound
+     * @param high inclusive upper bound
+     * @return {@code low} if {@code value < low}, {@code high} if {@code value > high}, else {@code value}
+     */
+    public static long clamp(long value, long low, long high) {
+        return value < low ? low : Math.min(value, high);
+    }
+
     private static String repeatChar(char c, int count) {
         if (count <= 0) {
             return "";

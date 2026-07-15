@@ -405,6 +405,16 @@ public class TerminalTextUtilsTest {
     }
 
     @Test
+    public void clamp_boundsValueBothOverloads() {
+        assertEquals(5, TerminalTextUtils.clamp(5, 0, 10));
+        assertEquals(0, TerminalTextUtils.clamp(-3, 0, 10));
+        assertEquals(10, TerminalTextUtils.clamp(42, 0, 10));
+        assertEquals(7L, TerminalTextUtils.clamp(7L, 0L, 10L));
+        assertEquals(0L, TerminalTextUtils.clamp(-1L, 0L, 10L));
+        assertEquals(10L, TerminalTextUtils.clamp(99L, 0L, 10L));
+    }
+
+    @Test
     public void ansiFoldColumns_plainTextFoldsLikeFoldColumns() {
         assertEquals(TerminalTextUtils.foldColumns(3, "abcdef"),
                 TerminalTextUtils.ansiFoldColumns(3, "abcdef"));
