@@ -12,6 +12,15 @@
 > inline-image subsystem. Drop-in for `com.googlecode.lanterna:lanterna:3.1.5`
 > (same packages/classes) plus one added package.
 
+### `3.1.5-vis.26`
+
+- **New: ANSI-SGR-aware column fold/slice** in `TerminalTextUtils` (Blockether-
+  original): `ansiFoldColumns` (styled SOFT-WRAP that re-opens the active SGR
+  across each break) and `ansiSliceColumns` (styled horizontal `less -S` window
+  clip). Same grapheme/EAW-aware column engine as `foldColumns` /
+  `truncateColumns`; ESC-free input takes the plain fast path. Moves the vis TUI
+  code-rail / pager kernels out of Clojure into all-primitive-int Java.
+
 ### `3.1.5-vis.25`
 
 - **New: column-aware layout helpers** in `TerminalTextUtils` (Blockether-

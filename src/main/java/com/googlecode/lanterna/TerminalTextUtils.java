@@ -818,6 +818,166 @@ public class TerminalTextUtils {
     }
 
     /**
+     * ANSI-SGR-aware character-fold (terminal-style SOFT WRAP) of {@code s} into
+     * segments each at most {@code maxColumns} display columns wide, never
+     * splitting a grapheme cluster and never counting a {@code \u001b[..m} escape
+     * toward the width. The SGR sequence active at a cut is RE-OPENED at the head
+     * of the next segment (and the cut segment is closed with {@code \u001b[0m}),
+     * so a syntax-highlighted line that folds keeps each token's color across the
+     * break instead of being clipped at the edge.
+     *
+     * <p>ESC-free input delegates to {@link #foldColumns(int, String)}; a segment
+     * always makes progress so a pathological width cannot loop. {@code null}/empty
+     * returns a single {@code ""}.
+     * @param maxColumns fold width in columns (clamped to at least 1)
+     * @param s input (nullable), may carry {@code \u001b[..m} SGR escapes
+     * @return folded segments, escapes balanced per segment
+     */
+    public static List<String> ansiFoldColumns(int maxColumns, String s) {
+        String str = s == null ? "" : s;
+        int budget = Math.max(1, maxColumns);
+        if (str.indexOf(27) < 0) { // no ESC: plain fold is enough
+            return foldColumns(budget, str);
+        }
+        List<String> out = new ArrayList<>();
+        String rest = str;
+        String active = ""; // SGR prefix to re-open on the next segment
+        int col = 0;
+        StringBuilder seg = new StringBuilder();
+        while (true) {
+            if (rest.isEmpty()) {
+                out.add(seg.toString());
+                return out;
+            }
+            if (rest.startsWith("\u001b[")) {
+                int m = rest.indexOf('m');
+                if (m < 0) { // malformed trailing escape: keep it verbatim and stop
+                    out.add(seg.append(rest).toString());
+                    return out;
+                }
+                String esc = rest.substring(0, m + 1);
+                String body = rest.substring(2, m);
+                active = (body.isEmpty() || body.equals("0") || body.equals("00")) ? "" : active + esc;
+                seg.append(esc);
+                rest = rest.substring(m + 1);
+                continue;
+            }
+            int escIdx = rest.indexOf("\u001b[");
+            String run = escIdx < 0 ? rest : rest.substring(0, escIdx);
+            String after = escIdx < 0 ? "" : rest.substring(escIdx);
+            int avail = budget - col;
+            int k = columnPrefixLength(run, avail);
+            if (k >= run.length()) { // whole run fits on the current row
+                col += displayColumns(run);
+                seg.append(run);
+                rest = after;
+                continue;
+            }
+            if (k == 0 && col > 0) { // nothing more fits on a partial row: close it, restart fresh
+                out.add(seg.toString() + "\u001b[0m");
+                seg = new StringBuilder(active);
+                col = 0;
+                rest = run + after;
+                continue;
+            }
+            // overflow at a fresh row: emit what fits (force >=1 grapheme so a
+            // double-width glyph under a tiny budget still progresses), close the
+            // row, and continue on a new row carrying `active`.
+            if (k == 0) {
+                k = TextCharacter.fromString(run)[0].getCharacterString().length();
+            }
+            String head = run.substring(0, k);
+            String tail = run.substring(k);
+            out.add(seg.append(head).toString() + "\u001b[0m");
+            seg = new StringBuilder(active);
+            col = 0;
+            rest = tail + after;
+        }
+    }
+
+    /**
+     * Return the display-column WINDOW {@code [start, start+width)} of {@code s} as
+     * a string — the horizontal {@code less -S} clip a code pager paints each row
+     * with (CHOP, not fold). ANSI-SGR aware: {@code \u001b[..m} escapes never count
+     * toward a column, the SGR active at the window's LEFT edge is RE-OPENED at the
+     * head of the result, escapes that fall INSIDE the window are kept inline, and
+     * the result is closed with {@code \u001b[0m} whenever any SGR was emitted — so
+     * a syntax-highlighted row keeps its colors when scrolled sideways.
+     *
+     * <p>ESC-free input is a plain grapheme-safe column slice (never splits a
+     * cluster). Negative {@code start} clamps to 0; non-positive {@code width}
+     * yields {@code ""}.
+     * @param s input (nullable), may carry {@code \u001b[..m} SGR escapes
+     * @param start left column of the window (clamped to 0)
+     * @param width window width in columns (&lt;= 0 yields "")
+     * @return the clipped window, escapes balanced
+     */
+    public static String ansiSliceColumns(String s, int start, int width) {
+        String str = s == null ? "" : s;
+        if (width <= 0) {
+            return "";
+        }
+        int lo0 = Math.max(0, start);
+        int end = lo0 + Math.max(0, width);
+        if (str.indexOf(27) < 0) { // plain text: two grapheme-safe prefix cuts bound the window exactly
+            return str.substring(columnPrefixLength(str, lo0), columnPrefixLength(str, end));
+        }
+        String rest = str;
+        String active = ""; // SGR prefix active at the cursor
+        int col = 0; // display column of the next glyph
+        StringBuilder out = new StringBuilder();
+        boolean opened = false; // emitted the active-SGR head yet?
+        boolean sgr = false; // emitted ANY escape (=> needs a reset)?
+        while (true) {
+            if (rest.isEmpty() || col >= end) {
+                if (sgr) {
+                    out.append("\u001b[0m");
+                }
+                return out.toString();
+            }
+            if (rest.startsWith("\u001b[")) {
+                int m = rest.indexOf('m');
+                if (m < 0) {
+                    if (sgr) {
+                        out.append("\u001b[0m");
+                    }
+                    return out.toString();
+                }
+                String esc = rest.substring(0, m + 1);
+                String body = rest.substring(2, m);
+                active = (body.isEmpty() || body.equals("0") || body.equals("00")) ? "" : active + esc;
+                // Escapes past the window's left edge paint inline; earlier ones
+                // only update `active` (re-opened when emitting starts).
+                if (opened) {
+                    out.append(esc);
+                    sgr = true;
+                }
+                rest = rest.substring(m + 1);
+                continue;
+            }
+            int escIdx = rest.indexOf("\u001b[");
+            String run = escIdx < 0 ? rest : rest.substring(0, escIdx);
+            String after = escIdx < 0 ? "" : rest.substring(escIdx);
+            int w = displayColumns(run);
+            int runEnd = col + w;
+            int lo = Math.max(lo0, col) - col; // cols to skip from run head
+            int hi = Math.min(end, runEnd) - col; // cols to keep to
+            if (lo < hi) {
+                String piece = run.substring(columnPrefixLength(run, lo), columnPrefixLength(run, hi));
+                boolean open = !opened && !active.isEmpty();
+                if (open) {
+                    out.append(active);
+                }
+                out.append(piece);
+                opened = true;
+                sgr = sgr || open;
+            }
+            col = runEnd;
+            rest = after;
+        }
+    }
+
+    /**
      * Full-justify the words on a single line to EXACTLY {@code width} display
      * columns by distributing spaces as evenly as possible between them (flush
      * to both margins). A blank line is returned as {@code width} spaces; a
