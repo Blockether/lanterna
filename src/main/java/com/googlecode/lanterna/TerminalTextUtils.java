@@ -230,6 +230,202 @@ public class TerminalTextUtils {
         return !isControlCharacter(c) || c == '\t' || c == '\n' || c == '\b';
     }
 
+    // ── Grapheme-cluster, per-terminal column measurement ───────────────────
+    //
+    // These mirror what AbstractTextGraphics.putString actually paints: text is
+    // segmented into grapheme clusters via TextCharacter.fromString and each
+    // cluster's width comes from TextCharacter.isDoubleWidth (which owns the
+    // per-terminal VS-16 policy, auto-detected from TERM_PROGRAM). So what we
+    // measure here always matches what the renderer emits. Pure printable-ASCII
+    // strings (the common case) short-circuit to their char length, skipping the
+    // grapheme/width segmentation entirely. All arithmetic is primitive int.
+
+    /**
+     * Inline-span sentinels: the BMP private-use range U+E110..U+E119 carries
+     * zero-width inline style toggles (bold/italic/strike/code/link on and off).
+     * They are never painted and occupy zero terminal columns.
+     */
+    private static final int INLINE_SENTINEL_LO = 0xE110;
+    private static final int INLINE_SENTINEL_HI = 0xE119;
+
+    private static boolean isInlineSentinel(String g) {
+        if (g.length() != 1) {
+            return false;
+        }
+        char c = g.charAt(0);
+        return c >= INLINE_SENTINEL_LO && c <= INLINE_SENTINEL_HI;
+    }
+
+    private static boolean allNarrowAscii(String s, int n) {
+        for (int i = 0; i < n; i++) {
+            char c = s.charAt(i);
+            if (c < 0x20 || c > 0x7E) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Replace every ASCII control character (U+0000..U+001F) in {@code s} with
+     * {@code '/'}, so a stray newline/tab/CR from a malformed string can never
+     * reach the grapheme splitter and crash a render. Returns {@code s} unchanged
+     * (same identity, no allocation) when it is already clean — the common case.
+     * Inline-span sentinels live in the private-use area, not C0, so they pass
+     * through untouched.
+     * @param s String to sanitize
+     * @return {@code s} with control characters replaced by {@code '/'}
+     */
+    public static String sanitizeControlChars(String s) {
+        int n = s.length();
+        int firstBad = -1;
+        for (int i = 0; i < n; i++) {
+            if (s.charAt(i) < 0x20) {
+                firstBad = i;
+                break;
+            }
+        }
+        if (firstBad < 0) {
+            return s;
+        }
+        StringBuilder sb = new StringBuilder(n);
+        sb.append(s, 0, firstBad);
+        for (int k = firstBad; k < n; k++) {
+            char c = s.charAt(k);
+            sb.append(c < 0x20 ? '/' : c);
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Number of terminal columns {@code s} occupies when painted, honouring
+     * grapheme clusters (via {@link TextCharacter#fromString}), CJK/emoji as two
+     * columns and ASCII as one. Inline-span sentinels count as zero columns.
+     * Control bytes are sanitized first. Returns 0 for {@code null} or empty.
+     * @param s String to measure
+     * @return number of terminal columns
+     */
+    public static int displayColumns(String s) {
+        if (s == null) {
+            return 0;
+        }
+        String safe = sanitizeControlChars(s);
+        int len = safe.length();
+        if (len == 0) {
+            return 0;
+        }
+        if (allNarrowAscii(safe, len)) {
+            return len;
+        }
+        TextCharacter[] cells = TextCharacter.fromString(safe);
+        int width = 0;
+        for (int i = 0; i < cells.length; i++) {
+            TextCharacter tc = cells[i];
+            if (isInlineSentinel(tc.getCharacterString())) {
+                continue;
+            }
+            width += tc.isDoubleWidth() ? 2 : 1;
+        }
+        return width;
+    }
+
+    /**
+     * Length (in chars) of the longest prefix of {@code s} whose
+     * {@link #displayColumns} is at most {@code maxCols} and which does not split
+     * a grapheme cluster. Returns 0 for {@code null}/empty or non-positive
+     * {@code maxCols}.
+     * @param s String to scan
+     * @param maxCols Column budget
+     * @return char length of the fitting prefix
+     */
+    public static int columnPrefixLength(String s, int maxCols) {
+        if (s == null || maxCols <= 0) {
+            return 0;
+        }
+        if (displayColumns(s) <= maxCols) {
+            return s.length();
+        }
+        TextCharacter[] cells = TextCharacter.fromString(s);
+        int charIdx = 0;
+        int used = 0;
+        for (int i = 0; i < cells.length; i++) {
+            TextCharacter tc = cells[i];
+            String g = tc.getCharacterString();
+            int w = isInlineSentinel(g) ? 0 : (tc.isDoubleWidth() ? 2 : 1);
+            if (used + w > maxCols) {
+                return charIdx;
+            }
+            charIdx += g.length();
+            used += w;
+        }
+        return charIdx;
+    }
+
+    /**
+     * Longest prefix of {@code s} fitting in at most {@code maxCols} columns,
+     * never splitting a grapheme. If a double-width grapheme would straddle the
+     * cut it is dropped and one space appended, so the result's
+     * {@link #displayColumns} is exactly {@code maxCols}. Zero-width inline
+     * sentinels are always emitted (never stranded past the cut). Returns
+     * {@code ""} for {@code null} or non-positive {@code maxCols}, and {@code s}
+     * itself when it already fits.
+     * @param s String to truncate
+     * @param maxCols Column budget
+     * @return the column-fitted prefix
+     */
+    public static String truncateColumns(String s, int maxCols) {
+        if (s == null || maxCols <= 0) {
+            return "";
+        }
+        if (displayColumns(s) <= maxCols) {
+            return s;
+        }
+        TextCharacter[] cells = TextCharacter.fromString(s);
+        StringBuilder sb = new StringBuilder();
+        int used = 0;
+        for (int i = 0; i < cells.length; i++) {
+            TextCharacter tc = cells[i];
+            String g = tc.getCharacterString();
+            int w = isInlineSentinel(g) ? 0 : (tc.isDoubleWidth() ? 2 : 1);
+            int next = used + w;
+            if (next > maxCols) {
+                if (used < maxCols) {
+                    sb.append(' ');
+                }
+                return sb.toString();
+            }
+            sb.append(g);
+            used = next;
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Truncate {@code s} to at most {@code maxCols} columns, appending
+     * {@code ellipsis} when it does not fit (reserving the ellipsis's own column
+     * width). Grapheme-cluster safe. Returns {@code ""} for non-positive
+     * {@code maxCols}; when even the ellipsis will not fit, returns the ellipsis
+     * truncated to {@code maxCols}.
+     * @param s String to ellipsize ({@code null} treated as empty)
+     * @param maxCols Column budget
+     * @param ellipsis Marker appended on truncation (e.g. "…" or "...")
+     * @return the ellipsized string
+     */
+    public static String ellipsize(String s, int maxCols, String ellipsis) {
+        String txt = s == null ? "" : s;
+        if (maxCols <= 0) {
+            return "";
+        }
+        if (displayColumns(txt) <= maxCols) {
+            return txt;
+        }
+        int ew = displayColumns(ellipsis);
+        if (maxCols <= ew) {
+            return truncateColumns(ellipsis, maxCols);
+        }
+        return truncateColumns(txt, maxCols - ew) + ellipsis;
+    }
+
     /**
      * Given a string, returns how many columns this string would need to occupy in a terminal, taking into account that
      * CJK characters takes up two columns.

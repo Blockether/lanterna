@@ -12,6 +12,26 @@
 > inline-image subsystem. Drop-in for `com.googlecode.lanterna:lanterna:3.1.5`
 > (same packages/classes) plus one added package.
 
+### `3.1.5-vis.24`
+
+- **New: grapheme-cluster column measurement** in `TerminalTextUtils`
+  (Blockether-original). Static, allocation-light helpers that measure/cut text
+  by the exact same rule `AbstractTextGraphics.putString` paints by — segmenting
+  into grapheme clusters via `TextCharacter.fromString` and taking each cluster's
+  width from `TextCharacter.isDoubleWidth` (which owns the per-terminal VS-16
+  policy). Consolidates measurement logic that downstream consumers (vis) were
+  re-implementing in Clojure:
+  - `displayColumns(String)` — terminal columns a string occupies; CJK/emoji = 2,
+    ASCII = 1, inline-span sentinels (U+E110..E119) = 0. Pure-ASCII fast path.
+  - `columnPrefixLength(String, int)` — char length of the longest column-fitting
+    prefix that never splits a grapheme.
+  - `truncateColumns(String, int)` — that prefix as a string (drops a straddling
+    wide grapheme and pads one space so the width is exact).
+  - `ellipsize(String, int, String)` — truncate with a trailing marker, reserving
+    the marker's own column width.
+  - `sanitizeControlChars(String)` — replace C0 control bytes with `/` (identity,
+    no allocation, when already clean) so a stray `\n` can't crash a render.
+
 ### `3.1.5-vis.23`
 
 - **New: inline terminal images** — `com.googlecode.lanterna.terminal.image.TerminalImage`
