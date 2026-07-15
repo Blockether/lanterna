@@ -1260,6 +1260,81 @@ public class TerminalTextUtils {
         return value < low ? low : Math.min(value, high);
     }
 
+    /**
+     * Returns a string containing {@code count} copies of {@code character}.
+     * Negative counts are treated as zero.
+     *
+     * <p>This is the shared primitive behind terminal chrome lines (borders,
+     * separators, table rules) so downstream code doesn't rebuild the same
+     * horizontal runs via higher-level language sequence helpers.</p>
+     *
+     * @param character character to repeat
+     * @param count number of copies to append
+     * @return repeated-character string, or the empty string when {@code count <= 0}
+     */
+    public static String repeat(char character, int count) {
+        return repeatChar(character, count);
+    }
+
+    /**
+     * Returns repeated-character segments joined by {@code separator}. Each
+     * entry in {@code segmentWidths} is clamped to zero before rendering.
+     *
+     * @param character repeated character for each segment
+     * @param segmentWidths widths of each repeated segment
+     * @param separator separator character between segments
+     * @return joined repeated segments
+     */
+    public static String joinedLine(char character, int[] segmentWidths, char separator) {
+        if (segmentWidths == null || segmentWidths.length == 0) {
+            return "";
+        }
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < segmentWidths.length; i++) {
+            if (i > 0) {
+                builder.append(separator);
+            }
+            appendRepeated(builder, character, segmentWidths[i]);
+        }
+        return builder.toString();
+    }
+
+    /**
+     * Returns a bordered repeated-character line such as {@code ┌──┬──┐}.
+     * The left/right and separator glyphs are supplied by the caller so the
+     * same primitive can render top, middle, and bottom rules.
+     *
+     * @param segmentWidths widths of each repeated segment
+     * @param left left edge glyph
+     * @param character repeated character for each segment
+     * @param separator separator glyph between segments
+     * @param right right edge glyph
+     * @return bordered line
+     */
+    public static String boxedLine(int[] segmentWidths, char left, char character, char separator, char right) {
+        StringBuilder builder = new StringBuilder();
+        builder.append(left);
+        if (segmentWidths != null) {
+            for (int i = 0; i < segmentWidths.length; i++) {
+                if (i > 0) {
+                    builder.append(separator);
+                }
+                appendRepeated(builder, character, segmentWidths[i]);
+            }
+        }
+        builder.append(right);
+        return builder.toString();
+    }
+
+    private static void appendRepeated(StringBuilder builder, char character, int count) {
+        if (count <= 0) {
+            return;
+        }
+        for (int i = 0; i < count; i++) {
+            builder.append(character);
+        }
+    }
+
     private static String repeatChar(char c, int count) {
         if (count <= 0) {
             return "";

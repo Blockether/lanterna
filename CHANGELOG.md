@@ -12,6 +12,14 @@
 > inline-image subsystem. Drop-in for `com.googlecode.lanterna:lanterna:3.1.5`
 > (same packages/classes) plus one added package.
 
+### `3.1.5-vis.28`
+
+- **New: terminal rule builders in `TerminalTextUtils`** (Blockether-original) —
+  `repeat`, `joinedLine`, and `boxedLine` centralize horizontal runs,
+  separators, and boxed border strings in Java `StringBuilder` code. Lets vis
+  TUI reuse lanterna for table/dialog chrome instead of rebuilding the same
+  `─┬─` / `┌─┐` strings through Clojure sequence helpers on every paint.
+
 ### `3.1.5-vis.27`
 
 - **New: `TerminalTextUtils.clamp`** (Blockether-original) — a public

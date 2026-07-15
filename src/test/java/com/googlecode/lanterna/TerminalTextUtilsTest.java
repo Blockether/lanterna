@@ -415,6 +415,15 @@ public class TerminalTextUtilsTest {
     }
 
     @Test
+    public void linePrimitives_buildRepeatedAndBoxedRules() {
+        assertEquals("────", TerminalTextUtils.repeat('─', 4));
+        assertEquals("", TerminalTextUtils.repeat('─', 0));
+        assertEquals("──┬───┬", TerminalTextUtils.joinedLine('─', new int[] {2, 3, 0}, '┬'));
+        assertEquals("┌──┬───┬┐", TerminalTextUtils.boxedLine(new int[] {2, 3, 0}, '┌', '─', '┬', '┐'));
+        assertEquals("└┘", TerminalTextUtils.boxedLine(null, '└', '─', '┴', '┘'));
+    }
+
+    @Test
     public void ansiFoldColumns_plainTextFoldsLikeFoldColumns() {
         assertEquals(TerminalTextUtils.foldColumns(3, "abcdef"),
                 TerminalTextUtils.ansiFoldColumns(3, "abcdef"));
