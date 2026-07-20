@@ -222,6 +222,11 @@ class NullTextGraphics implements TextGraphics {
     }
 
     @Override
+    public TextGraphics putString(int column, int row, TextCharacter[] characters) {
+        return this;
+    }
+
+    @Override
     public TextGraphics putString(TerminalPosition position, String string) {
         return this;
     }

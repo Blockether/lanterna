@@ -314,6 +314,21 @@ public interface TextGraphics extends StyleSet<TextGraphics> {
     TextGraphics putString(int column, int row, String string);
 
     /**
+     * Puts a PRE-SEGMENTED array of {@link TextCharacter}s on the screen starting at the specified position. This is the
+     * zero-parsing sibling of {@link #putString(int, int, String)}: the caller has already done grapheme segmentation
+     * (e.g. via {@link TextCharacter#fromString}) and may CACHE the resulting array across frames, so no per-call
+     * allocation or {@code BreakIterator} walk happens here. Column advance is identical to the String overload —
+     * double-width characters occupy two columns. Unlike the String overload this does NOT strip newlines or expand
+     * tabs; the caller owns that (the characters are painted verbatim). The characters carry their own colors and
+     * modifiers, so the current {@link TextGraphics} style is NOT applied.
+     * @param column What column to put the first character at
+     * @param row What row to put the characters at
+     * @param characters Pre-segmented characters to paint (typically cached by the caller)
+     * @return Itself
+     */
+    TextGraphics putString(int column, int row, TextCharacter[] characters);
+
+    /**
      * Shortcut to calling:
      * <pre>
      *  putString(position.getColumn(), position.getRow(), string);
