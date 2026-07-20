@@ -345,6 +345,10 @@ public class TerminalTextUtils {
         if (displayColumns(s) <= maxCols) {
             return s.length();
         }
+        if (allNarrowAscii(s, s.length())) {
+            // ASCII: one column per char, so the longest fitting prefix is maxCols chars.
+            return maxCols;
+        }
         TextCharacter[] cells = TextCharacter.fromString(s);
         int charIdx = 0;
         int used = 0;
@@ -379,6 +383,13 @@ public class TerminalTextUtils {
         }
         if (displayColumns(s) <= maxCols) {
             return s;
+        }
+        int len = s.length();
+        if (allNarrowAscii(s, len)) {
+            // ASCII: every char is exactly one column, no grapheme clusters and no
+            // double-width straddle, so the fit is a plain substring (already known
+            // over budget). Skips the per-grapheme TextCharacter[] allocation.
+            return s.substring(0, maxCols);
         }
         TextCharacter[] cells = TextCharacter.fromString(s);
         StringBuilder sb = new StringBuilder();
@@ -759,6 +770,16 @@ public class TerminalTextUtils {
     }
 
     private static List<String> hardSplitColumns(String word, int maxColumns) {
+        int wlen = word.length();
+        if (maxColumns > 0 && allNarrowAscii(word, wlen)) {
+            // ASCII: fixed-width chunks, a plain substring walk — no per-grapheme
+            // TextCharacter[] allocation.
+            List<String> pieces = new ArrayList<>((wlen / maxColumns) + 1);
+            for (int i = 0; i < wlen; i += maxColumns) {
+                pieces.add(word.substring(i, Math.min(wlen, i + maxColumns)));
+            }
+            return pieces;
+        }
         List<String> pieces = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         int currentWidth = 0;
@@ -815,6 +836,46 @@ public class TerminalTextUtils {
             out.add("");
         }
         return out;
+    }
+
+    /**
+     * Replace every hard TAB in {@code s} with spaces up to the next {@code tabWidth}
+     * tab stop, counted by OUTPUT CHARACTER POSITION from column 0 — mirroring the way
+     * {@link AbstractTextGraphics#putString} advances a hard TAB to a fixed stop at paint
+     * time. Expanding a tab-bearing line up front makes its measured/soft-wrapped width
+     * match what the painter later emits, so tab-separated tool output stops overflowing
+     * the bubble's right edge once paint re-expands the tabs.
+     *
+     * <p>Tab-free input is returned UNCHANGED (the same instance — no allocation), so the
+     * common no-tab case is free. {@code null} becomes {@code ""}. Column tracking is by
+     * char position (ASCII tool output), not display width.
+     * @param s input (nullable)
+     * @param tabWidth tab-stop width in columns (clamped to at least 1)
+     * @return {@code s} with every tab expanded to spaces
+     */
+    public static String expandTabs(String s, int tabWidth) {
+        if (s == null) {
+            return "";
+        }
+        if (s.indexOf('\t') < 0) {
+            return s;
+        }
+        int stop = Math.max(1, tabWidth);
+        int n = s.length();
+        StringBuilder sb = new StringBuilder(n + stop);
+        for (int i = 0; i < n; i++) {
+            char c = s.charAt(i);
+            if (c == '\t') {
+                int pad = stop - (sb.length() % stop);
+                for (int j = 0; j < pad; j++) {
+                    sb.append(' ');
+                }
+            }
+            else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
     }
 
     /**
@@ -975,6 +1036,92 @@ public class TerminalTextUtils {
             col = runEnd;
             rest = after;
         }
+    }
+
+    /**
+     * ANSI-SGR-aware column TRUNCATE (terminal-style HARD CLIP to a prefix) of
+     * {@code s} to at most {@code maxCols} display columns, never splitting a
+     * grapheme cluster and never counting a {@code \u001b[..m} escape toward the
+     * width. Unlike {@link #ansiSliceColumns(String, int, int)}, escapes are kept
+     * inline VERBATIM (the run is NOT re-balanced with a leading re-open / trailing
+     * reset) — this is the clip the chat-bubble painter feeds straight to the
+     * grapheme splitter, so it also DEFENDS against malformed / non-SGR control
+     * escapes by rendering them as a single visible middle dot ({@code \u00B7})
+     * rather than leaking a raw ESC (0x1b) that would throw downstream.
+     *
+     * <p>ESC-free input delegates to {@link #truncateColumns(String, int)}.
+     * {@code null}/empty or {@code maxCols <= 0} returns {@code ""}.
+     * @param s input (nullable), may carry {@code \u001b[..m} SGR escapes
+     * @param maxCols column budget (&lt;= 0 yields "")
+     * @return the column-fitted prefix, SGR escapes preserved inline
+     */
+    public static String ansiTruncateColumns(String s, int maxCols) {
+        int budget = Math.max(0, maxCols);
+        if (s == null || budget == 0) {
+            return "";
+        }
+        if (s.indexOf(27) < 0) { // no ESC: plain grapheme-safe column truncate
+            return truncateColumns(s, budget);
+        }
+        int n = s.length();
+        StringBuilder sb = new StringBuilder();
+        int i = 0;
+        int used = 0;
+        while (i < n && used < budget) {
+            int escIdx = s.indexOf(27, i);
+            if (escIdx < 0) {
+                escIdx = n;
+            }
+            if (i < escIdx) { // plain-text run before the next escape
+                String chunk = s.substring(i, escIdx);
+                int w = displayColumns(chunk);
+                if (used + w <= budget) {
+                    sb.append(chunk);
+                    used += w;
+                    i = escIdx;
+                } else {
+                    sb.append(truncateColumns(chunk, budget - used));
+                    return sb.toString();
+                }
+            } else { // sitting on an ESC
+                int m = sgrEscapeEnd(s, escIdx);
+                if (m < 0) { // unknown / non-SGR control escape: one visible middle dot
+                    if (used + 1 > budget) {
+                        return sb.toString();
+                    }
+                    sb.append('\u00B7');
+                    used += 1;
+                    i = escIdx + 1;
+                } else { // well-formed \u001b[..m : zero-width, keep verbatim
+                    sb.append(s, escIdx, m + 1);
+                    i = m + 1;
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    /**
+     * If {@code s} at {@code escIdx} begins a well-formed {@code \u001b[ ... m} SGR
+     * sequence (only digits and {@code ';'} between {@code [} and the closing
+     * {@code m}), return the index of that {@code m}; otherwise {@code -1}.
+     */
+    private static int sgrEscapeEnd(String s, int escIdx) {
+        int n = s.length();
+        if (escIdx + 1 >= n || s.charAt(escIdx + 1) != '[') {
+            return -1;
+        }
+        int mIdx = s.indexOf('m', escIdx + 2);
+        if (mIdx < 0) {
+            return -1;
+        }
+        for (int k = escIdx + 2; k < mIdx; k++) {
+            char c = s.charAt(k);
+            if (!Character.isDigit(c) && c != ';') {
+                return -1;
+            }
+        }
+        return mIdx;
     }
 
     /**

@@ -12,6 +12,35 @@
 > inline-image subsystem. Drop-in for `com.googlecode.lanterna:lanterna:3.1.5`
 > (same packages/classes) plus one added package.
 
+### `3.1.5-vis.31`
+
+- **Perf: ASCII fast paths for `truncateColumns` / `columnPrefixLength` /
+  `hardSplitColumns`** (Blockether-original). The over-budget branch of each used to
+  allocate a full per-grapheme `TextCharacter[]` (one object + one `String` per cell) via
+  `fromString` even for pure printable-ASCII text — where truncation/folding is just a
+  substring. Gated by the existing `allNarrowAscii` check, ASCII input now takes an
+  allocation-free substring path (identical output; non-ASCII/grapheme/CJK/emoji still take
+  the exact prior path). This is the hot column-clip family the chat-bubble layout walker
+  runs per visible row: measured ~5000 -> ~200 ns/op on a 65-char line (~25x), with the
+  per-line `TextCharacter[]` garbage eliminated.
+
+### `3.1.5-vis.30`
+
+- **New: `TerminalTextUtils.expandTabs(String, int)`** (Blockether-original) — hard-TAB
+  expansion to fixed char-position tab stops, mirroring how `putString` advances a tab at
+  paint time. Ports the vis TUI's last remaining pure-Clojure text primitive
+  (`primitives/expand-tabs`, mapped over every code-block line by the markdown layout
+  walker) into the shared Java engine. Tab-free input is returned as the SAME instance
+  (allocation-free fast path). Tested + microbenched in `TerminalTextUtilsTest`.
+
+### `3.1.5-vis.29`
+
+- **New: `TerminalTextUtils.ansiTruncateColumns(String, int)`** (Blockether-original) —
+  ANSI-SGR-aware column TRUNCATE (hard clip to a prefix), the CHOP sibling of
+  `ansiFoldColumns`/`ansiSliceColumns`. Escapes kept inline verbatim, malformed control
+  escapes render as a middle dot so a raw ESC never reaches the grapheme splitter. Ports
+  the TUI's `render/truncate-ansi-cols`. Tested + microbenched.
+
 ### `3.1.5-vis.28`
 
 - **New: terminal rule builders in `TerminalTextUtils`** (Blockether-original) —

@@ -462,6 +462,118 @@ public class TerminalTextUtilsTest {
         assertTrue("closes with a reset", r.endsWith("\u001b[0m"));
     }
 
+    @Test
+    public void ansiTruncateColumns_plainTextTruncatesLikeTruncateColumns() {
+        assertEquals("", TerminalTextUtils.ansiTruncateColumns(null, 5));
+        assertEquals("", TerminalTextUtils.ansiTruncateColumns("abc", 0));
+        assertEquals("hello", TerminalTextUtils.ansiTruncateColumns("hello world", 5));
+        assertEquals("hello world", TerminalTextUtils.ansiTruncateColumns("hello world", 100));
+        // CJK never split: "\u65e5\u672c\u8a9e" (3 x 2-col) clipped to 3 cols keeps "\u65e5" + a pad space
+        assertEquals("\u65e5 ", TerminalTextUtils.ansiTruncateColumns("\u65e5\u672c\u8a9eab", 3));
+    }
+
+    @Test
+    public void ansiTruncateColumns_keepsSgrEscapesInlineZeroWidth() {
+        // escapes cost 0 columns and are kept VERBATIM (no re-open / trailing reset)
+        String r = TerminalTextUtils.ansiTruncateColumns("\u001b[31mred\u001b[0m tail", 4);
+        assertEquals("\u001b[31mred\u001b[0m ", r);
+        assertEquals("visible width is exactly the budget", 4, TerminalTextUtils.displayColumns(stripAnsi(r)));
+        assertEquals("\u001b[1;33mbig", TerminalTextUtils.ansiTruncateColumns("\u001b[1;33mbig yellow\u001b[0m", 3));
+        assertEquals("\u001b[31mre", TerminalTextUtils.ansiTruncateColumns("\u001b[31mred", 2));
+    }
+
+    @Test
+    public void ansiTruncateColumns_defendsAgainstMalformedControlEscape() {
+        // A non-SGR control escape (ESC not followed by "[..m") must never leak a raw
+        // 0x1b to the grapheme splitter: it renders as a single visible middle dot.
+        String r = TerminalTextUtils.ansiTruncateColumns("ab\u001bXbad", 5);
+        assertEquals("ab\u00b7Xb", r);
+        assertEquals("no raw ESC leaks through", -1, r.indexOf(27));
+    }
+
+    /**
+     * Printed microbenchmark (warm-up + timed loop, ns/op) for the ANSI column
+     * clip the chat-bubble painter runs per visible row. Mirrors the
+     * TerminalImageBenchmarkTest style: prints the number, never fails on timing.
+     */
+    @Test
+    public void ansiTruncateColumns_microbench() {
+        final int warmup = 50_000;
+        final int iters = 500_000;
+        String plain = "the quick brown fox jumps over the lazy dog and then some more";
+        String colored = "\u001b[38;5;203mdefn\u001b[0m \u001b[38;5;149mtruncate-ansi-cols\u001b[0m "
+                + "[\u001b[38;5;179ms\u001b[0m \u001b[38;5;179mmax-cols\u001b[0m] body body body";
+        long sink = 0;
+        for (int i = 0; i < warmup; i++) {
+            sink += TerminalTextUtils.ansiTruncateColumns(plain, 40).length();
+            sink += TerminalTextUtils.ansiTruncateColumns(colored, 40).length();
+        }
+        long t0 = System.nanoTime();
+        for (int i = 0; i < iters; i++) {
+            sink += TerminalTextUtils.ansiTruncateColumns(plain, 40).length();
+        }
+        double plainNs = (System.nanoTime() - t0) / (double) iters;
+        long t1 = System.nanoTime();
+        for (int i = 0; i < iters; i++) {
+            sink += TerminalTextUtils.ansiTruncateColumns(colored, 40).length();
+        }
+        double coloredNs = (System.nanoTime() - t1) / (double) iters;
+        System.out.println("[TerminalTextUtils bench] ansiTruncateColumns");
+        System.out.printf("  %-28s %,10.1f ns/op%n", "plain(62ch -> 40col)", plainNs);
+        System.out.printf("  %-28s %,10.1f ns/op%n", "sgr-colored(-> 40col)", coloredNs);
+        assertTrue(sink != Long.MIN_VALUE);
+    }
+
+    @Test
+    public void expandTabs_advancesToCharPositionStops() {
+        assertEquals("", TerminalTextUtils.expandTabs(null, 4));
+        assertEquals("", TerminalTextUtils.expandTabs("", 4));
+        // tab-separated tool output aligns to the next 4-col stop, mirroring putString
+        assertEquals("38  OPEN    XY", TerminalTextUtils.expandTabs("38\tOPEN\tXY", 4));
+        assertEquals("    X", TerminalTextUtils.expandTabs("\tX", 4));
+        // a tab sitting exactly on a stop advances a full width
+        assertEquals("abcd    e", TerminalTextUtils.expandTabs("abcd\te", 4));
+        assertEquals(-1, TerminalTextUtils.expandTabs("a\tb\tc\td", 4).indexOf('\t'));
+    }
+
+    @Test
+    public void expandTabs_returnsSameInstanceWhenNoTab() {
+        String s = "no tabs here";
+        // identity fast path: the Clojure primitive relies on (identical? s (expand-tabs s))
+        assertSame(s, TerminalTextUtils.expandTabs(s, 4));
+    }
+
+    /**
+     * Printed microbenchmark (warm-up + timed loop, ns/op) for tab expansion the layout
+     * walker runs over every code-block line. Prints the number, never fails on timing.
+     */
+    @Test
+    public void expandTabs_microbench() {
+        final int warmup = 50_000;
+        final int iters = 500_000;
+        String tabbed = "38\tOPEN\tbug: overflow\tfierycod\t2024-01-02";
+        String clean = "the quick brown fox jumps over the lazy dog and then some more";
+        long sink = 0;
+        for (int i = 0; i < warmup; i++) {
+            sink += TerminalTextUtils.expandTabs(tabbed, 4).length();
+            sink += TerminalTextUtils.expandTabs(clean, 4).length();
+        }
+        long t0 = System.nanoTime();
+        for (int i = 0; i < iters; i++) {
+            sink += TerminalTextUtils.expandTabs(tabbed, 4).length();
+        }
+        double tabbedNs = (System.nanoTime() - t0) / (double) iters;
+        long t1 = System.nanoTime();
+        for (int i = 0; i < iters; i++) {
+            sink += TerminalTextUtils.expandTabs(clean, 4).length();
+        }
+        double cleanNs = (System.nanoTime() - t1) / (double) iters;
+        System.out.println("[TerminalTextUtils bench] expandTabs");
+        System.out.printf("  %-28s %,10.1f ns/op%n", "tabbed(5 tabs)", tabbedNs);
+        System.out.printf("  %-28s %,10.1f ns/op%n", "clean(no-tab fast path)", cleanNs);
+        assertTrue(sink != Long.MIN_VALUE);
+    }
+
     // Add a test for traditional Chinese characters here? If someone can contribute a list! The list of simplified
     // Chinese characters was difficult enough...
     private static final String LATIN1 =
