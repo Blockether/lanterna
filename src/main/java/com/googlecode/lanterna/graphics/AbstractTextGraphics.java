@@ -274,6 +274,23 @@ public abstract class AbstractTextGraphics implements TextGraphics {
     }
 
     @Override
+    public TextGraphics putString(int column, int row, TextCharacter[] characters) {
+        // Zero-parsing sibling of putString(String): the caller supplies an already-segmented
+        // (and typically CACHED) TextCharacter[], so we skip prepareStringForPut + fromString
+        // entirely and only walk the setCharacter loop. Column advance mirrors the String path
+        // exactly, including the double-width two-column step.
+        int previousDoubleCharacterCount = 0;
+        for (int i = 0; i < characters.length; i++) {
+            TextCharacter textCharacter = characters[i];
+            setCharacter(column + i + previousDoubleCharacterCount, row, textCharacter);
+            if (textCharacter.isDoubleWidth()) {
+                previousDoubleCharacterCount++;
+            }
+        }
+        return this;
+    }
+
+    @Override
     public TextGraphics putString(TerminalPosition position, String string) {
         putString(position.getColumn(), position.getRow(), string);
         return this;

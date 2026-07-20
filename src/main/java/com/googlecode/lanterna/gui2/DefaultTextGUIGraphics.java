@@ -225,6 +225,12 @@ public class DefaultTextGUIGraphics implements TextGUIGraphics {
     }
 
     @Override
+    public DefaultTextGUIGraphics putString(int column, int row, TextCharacter[] characters) {
+        backend.putString(column, row, characters);
+        return this;
+    }
+
+    @Override
     public DefaultTextGUIGraphics putString(TerminalPosition position, String string) {
         backend.putString(position, string);
         return this;
