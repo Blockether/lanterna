@@ -309,6 +309,26 @@ public class TerminalTextUtils {
         if (s == null) {
             return 0;
         }
+        int len = s.length();
+        if (len == 0) {
+            return 0;
+        }
+        // Single fused scan: a printable-ASCII line (the common case, measured every
+        // frame) needs neither control-char sanitization nor grapheme segmentation, so
+        // confirm "all narrow ASCII" in ONE pass and short-circuit to its char length.
+        // Any control byte (< 0x20) or non-ASCII (> 0x7E) char drops to the slow
+        // grapheme path. This replaces the previous two full O(n) passes
+        // (sanitizeControlChars then allNarrowAscii) with one.
+        for (int i = 0; i < len; i++) {
+            char c = s.charAt(i);
+            if (c < 0x20 || c > 0x7E) {
+                return displayColumnsSlow(s);
+            }
+        }
+        return len;
+    }
+
+    private static int displayColumnsSlow(String s) {
         String safe = sanitizeControlChars(s);
         int len = safe.length();
         if (len == 0) {
@@ -342,14 +362,18 @@ public class TerminalTextUtils {
         if (s == null || maxCols <= 0) {
             return 0;
         }
-        if (displayColumns(s) <= maxCols) {
-            return s.length();
+        String safe = sanitizeControlChars(s);
+        int len = safe.length();
+        if (allNarrowAscii(safe, len)) {
+            // ASCII: one column per char, so the longest fitting prefix is min(len, maxCols).
+            return Math.min(len, maxCols);
         }
-        if (allNarrowAscii(s, s.length())) {
-            // ASCII: one column per char, so the longest fitting prefix is maxCols chars.
-            return maxCols;
-        }
-        TextCharacter[] cells = TextCharacter.fromString(s);
+        // Single grapheme segmentation that both measures and finds the cut. The prior
+        // version called displayColumns() first (a full fromString walk) and then
+        // fromString() again to walk — segmenting every clipped non-ASCII line twice.
+        // Walking to completion yields charIdx == len when the whole string fits, so the
+        // leading displayColumns() early-out is redundant.
+        TextCharacter[] cells = TextCharacter.fromString(safe);
         int charIdx = 0;
         int used = 0;
         for (int i = 0; i < cells.length; i++) {
@@ -381,32 +405,41 @@ public class TerminalTextUtils {
         if (s == null || maxCols <= 0) {
             return "";
         }
-        if (displayColumns(s) <= maxCols) {
-            return s;
-        }
         int len = s.length();
         if (allNarrowAscii(s, len)) {
             // ASCII: every char is exactly one column, no grapheme clusters and no
-            // double-width straddle, so the fit is a plain substring (already known
-            // over budget). Skips the per-grapheme TextCharacter[] allocation.
-            return s.substring(0, maxCols);
+            // double-width straddle, so the fit is a plain substring.
+            return len <= maxCols ? s : s.substring(0, maxCols);
         }
+        // Segment ONCE. The prior version called displayColumns() (a full fromString
+        // walk) purely to test "does it fit", then fromString() AGAIN to build the
+        // truncation — segmenting every clipped non-ASCII line twice. Here a single
+        // fromString feeds a cheap fit-probe over the materialized cells; only on an
+        // actual overflow do we allocate a StringBuilder (the fit case returns the
+        // original string with zero allocation, as before). At the break, `used` is
+        // already the exact column width of the fitting prefix.
         TextCharacter[] cells = TextCharacter.fromString(s);
-        StringBuilder sb = new StringBuilder();
         int used = 0;
+        int cut = -1;
         for (int i = 0; i < cells.length; i++) {
             TextCharacter tc = cells[i];
             String g = tc.getCharacterString();
             int w = isInlineSentinel(g) ? 0 : (tc.isDoubleWidth() ? 2 : 1);
-            int next = used + w;
-            if (next > maxCols) {
-                if (used < maxCols) {
-                    sb.append(' ');
-                }
-                return sb.toString();
+            if (used + w > maxCols) {
+                cut = i;
+                break;
             }
-            sb.append(g);
-            used = next;
+            used += w;
+        }
+        if (cut < 0) {
+            return s;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < cut; i++) {
+            sb.append(cells[i].getCharacterString());
+        }
+        if (used < maxCols) {
+            sb.append(' ');
         }
         return sb.toString();
     }
