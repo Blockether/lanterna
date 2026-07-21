@@ -149,6 +149,26 @@ public class TerminalImageTest {
     }
 
     @Test
+    public void encodeKittyNoCropMatchesPlain() {
+        String plain = TerminalImage.encodeKitty("QUJD", 40, 20);
+        String zero = TerminalImage.encodeKitty("QUJD", 40, 20, 0, 0, 360, 720);
+        assertEquals(plain, zero);
+    }
+
+    @Test
+    public void encodeKittyCropsToVisibleSourceRectangle() {
+        // 360x720px image in a 40x20 cell box; crop 5 rows off the top.
+        String top = TerminalImage.encodeKitty("QUJD", 40, 20, 5, 0, 360, 720);
+        assertTrue(top.startsWith("\u001b_Ga=T,f=100,q=2,C=1,c=40,r=15,x=0,y=180,w=360,h=540;"));
+        // Bottom crop shrinks the source height but keeps the y-origin at 0.
+        String bottom = TerminalImage.encodeKitty("QUJD", 40, 20, 0, 8, 360, 720);
+        assertTrue(bottom.contains(",r=12,x=0,y=0,w=360,h=432;"));
+        // Missing pixel dimensions fall back to the plain (uncropped) sequence.
+        String noDims = TerminalImage.encodeKitty("QUJD", 40, 20, 5, 0, 0, 0);
+        assertEquals(TerminalImage.encodeKitty("QUJD", 40, 15), noDims);
+    }
+
+    @Test
     public void encodeIterm2Format() {
         String s = TerminalImage.encodeIterm2("QUJD", 12);
         assertEquals("\u001b]1337;File=inline=1;width=12;height=auto;preserveAspectRatio=1:QUJD\u0007", s);
@@ -184,5 +204,21 @@ public class TerminalImageTest {
         assertTrue("width fits box", out.getWidth() <= 90);
         assertTrue("height fits box", out.getHeight() <= 90);
         assertTrue("aspect preserved (wider than tall)", out.getWidth() >= out.getHeight());
+    }
+
+    @Test
+    public void transcodePngReportsTransmittedDimensions() throws Exception {
+        File f = File.createTempFile("timg-dims", ".png");
+        f.deleteOnExit();
+        ImageIO.write(new BufferedImage(800, 400, BufferedImage.TYPE_INT_ARGB), "png", f);
+        Object[] r = TerminalImage.transcodePng(f.getAbsolutePath(), 40, 20);
+        assertNotNull(r);
+        assertNotNull(r[0]);
+        int w = (Integer) r[1];
+        int h = (Integer) r[2];
+        // 40*9=360 x 20*18=360 box; source 800x400 scales by 0.45 to 360x180.
+        assertTrue("width fits box", w <= 360);
+        assertTrue("height fits box", h <= 360);
+        assertEquals("aspect preserved 2:1", w, h * 2);
     }
 }

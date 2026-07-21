@@ -337,7 +337,55 @@ public final class TerminalImage {
         if (rows > 0) {
             head.append(",r=").append(rows);
         }
-        String h = head.toString();
+        return emitKitty(head.toString(), data);
+    }
+
+    /**
+     * Kitty transmit+display sequence that shows only a VERTICAL SLICE of the
+     * image — the cell rows {@code [cropTopRows, rows - cropBottomRows)} of a
+     * {@code cols}×{@code rows} box — at native scale, via the protocol's source
+     * rectangle ({@code x,y,w,h} in pixels). This lets an image scrolled partly
+     * past the top or bottom edge of the transcript band render the visible part
+     * instead of vanishing. {@code imgW}×{@code imgH} are the TRANSMITTED image's
+     * pixel dimensions (the original file for a PNG pass-through, the scaled PNG
+     * for a transcode) — the crop rectangle is derived from them. With no crop
+     * (or missing dimensions) it is identical to {@link #encodeKitty(String,int,int)}.
+     */
+    public static String encodeKitty(String data, int cols, int rows,
+                                     int cropTopRows, int cropBottomRows,
+                                     int imgW, int imgH) {
+        int ct = Math.max(0, cropTopRows);
+        int cb = Math.max(0, cropBottomRows);
+        int visRows = rows - ct - cb;
+        if (visRows < 1) {
+            visRows = 1;
+        }
+        if ((ct == 0 && cb == 0) || rows <= 0 || imgH <= 0) {
+            return encodeKitty(data, cols, visRows);
+        }
+        long y = Math.round((double) imgH * ct / rows);
+        long h = Math.round((double) imgH * visRows / rows);
+        if (h < 1) {
+            h = 1;
+        }
+        if (y + h > imgH) {
+            h = imgH - y;
+        }
+        StringBuilder head = new StringBuilder("a=T,f=100,q=2,C=1");
+        if (cols > 0) {
+            head.append(",c=").append(cols);
+        }
+        head.append(",r=").append(visRows);
+        head.append(",x=0,y=").append(y);
+        if (imgW > 0) {
+            head.append(",w=").append(imgW);
+        }
+        head.append(",h=").append(h);
+        return emitKitty(head.toString(), data);
+    }
+
+    /** Chunk {@code data} into a Kitty {@code _G} transmit sequence for header {@code h}. */
+    private static String emitKitty(String h, String data) {
         if (data.length() <= KITTY_CHUNK) {
             return ESC + "_G" + h + ";" + data + ESC + "\\";
         }
@@ -399,6 +447,10 @@ public final class TerminalImage {
     // that re-emits the image doesn't re-run ImageIO each time.
     private static final Map<String, String> pngTranscodeCache = new ConcurrentHashMap<>();
 
+    // Parallel cache of the transmitted PNG's [w, h] pixel size, keyed identically
+    // to pngTranscodeCache so a crop can size its source rectangle without a re-decode.
+    private static final Map<String, int[]> pngTranscodeDims = new ConcurrentHashMap<>();
+
     /**
      * Decode {@code path} (any ImageIO-readable format) and re-encode it as a
      * PNG base64 string, downscaled so it fits the {@code cols}×{@code rows}
@@ -408,12 +460,24 @@ public final class TerminalImage {
      * text card.
      */
     public static String transcodePngBase64(String path, int cols, int rows) {
+        Object[] r = transcodePng(path, cols, rows);
+        return r == null ? null : (String) r[0];
+    }
+
+    /**
+     * Like {@link #transcodePngBase64} but also reports the transmitted PNG's
+     * pixel dimensions as {@code [base64, width, height]} (or {@code null} on
+     * failure). The dimensions let a caller crop the image to a source rectangle
+     * via {@link #encodeKitty(String,int,int,int,int,int,int)}.
+     */
+    public static Object[] transcodePng(String path, int cols, int rows) {
         try {
             File f = new File(path);
             String key = path + "|" + f.lastModified() + "|" + f.length() + "|" + cols + "|" + rows;
             String hit = pngTranscodeCache.get(key);
-            if (hit != null) {
-                return hit;
+            int[] dhit = pngTranscodeDims.get(key);
+            if (hit != null && dhit != null) {
+                return new Object[]{hit, dhit[0], dhit[1]};
             }
             BufferedImage img = ImageIO.read(f);
             if (img == null) {
@@ -437,12 +501,15 @@ public final class TerminalImage {
                 scaled = bi;
             } else {
                 scaled = img;
+                sw = iw;
+                sh = ih;
             }
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
             ImageIO.write(scaled, "png", baos);
             String data = Base64.getEncoder().encodeToString(baos.toByteArray());
             pngTranscodeCache.put(key, data);
-            return data;
+            pngTranscodeDims.put(key, new int[]{sw, sh});
+            return new Object[]{data, sw, sh};
         } catch (Throwable t) {
             return null;
         }
