@@ -12,6 +12,91 @@
 > inline-image subsystem. Drop-in for `com.googlecode.lanterna:lanterna:3.1.5`
 > (same packages/classes) plus one added package.
 
+### `3.1.5-vis.39`
+
+- **`java.desktop` is gone — the fork no longer touches AWT at all.** The module is
+  not even a `requires static` any more, so the jar links and runs on a JDK image
+  built without `java.desktop` (and inside a GraalVM native image) without the
+  AWT toolkit, fontconfig or the ImageIO reader SPI ever being initialised.
+  - `TextColor.toColor()` (and its three implementations on `ANSI`, `Indexed` and
+    `RGB`) is **removed** — it was already `@Deprecated` upstream precisely because
+    it "adds a runtime dependency to the java.desktop module which isn't declared in
+    the module descriptor of lanterna". Callers want `getRed()/getGreen()/getBlue()`.
+  - `TerminalImage` no longer decodes or re-encodes anything: the `ImageIO` /
+    `BufferedImage` / `Graphics2D` transcode path (`transcodePng`, the box-sizing
+    resample, the `encodeKitty` crop overload's re-decode and the two transcode
+    caches) and the `java.awt.headless` static initialiser are **removed**. What
+    stays is pure byte work — protocol detection, intrinsic pixel-dimension sniffing
+    from file headers, cell-box sizing and Kitty/iTerm2 base64 emission — so the
+    caller supplies already-encoded PNG bytes and owns its own imaging stack.
+  - New `TerminalImage.cellWidth()` / `cellHeight()` accessors expose the cell pixel
+    size set through `setCellDimensions`, which a caller now needs to size its own
+    rasterisation.
+- `module-info` exports `com.googlecode.lanterna.terminal.image`, the fork's one
+  added package — it was unexported since the descriptor moved out of
+  `META-INF/versions/9` in `3.1.5-vis.37`, so modulepath consumers could not read it.
+
+### `3.1.5-vis.38`
+
+- **The Swing/AWT terminal emulator is gone.** The whole
+  `com.googlecode.lanterna.terminal.swing` package (17 classes: `SwingTerminal`,
+  `SwingTerminalFrame`, `AWTTerminal`, `AWTTerminalFrame`, the scrolling variants,
+  `TerminalEmulator*Configuration`, `TerminalEmulatorPalette`,
+  `TerminalInputMethodRequests`, `TerminalScrollController`) is deleted, together with
+  its `exports` in `module-info` and the Swing-only manual demos in the test tree
+  (`SwingTerminalTest`, `NewSwingTerminalTest`, `Scrolling{Swing,AWT}TerminalTest`,
+  `Issue95`, `Issue613`). The consumer is a terminal application; it never opens a
+  GUI window.
+- `DefaultTerminalFactory` is now text-terminal only: `createTerminal()` always
+  delegates to `createHeadlessTerminal()`, and `createTerminalEmulator()`,
+  `createSwingTerminal()`, `createAWTTerminal()` and the
+  `setTerminalEmulator{Color,Device,Font}Configuration` /
+  `setTerminalEmulatorFrameAutoCloseTrigger` / `setForceAWTOverSwing` setters
+  (all of which took Swing-package types) are removed.
+  `setForceTextTerminal`, `setPreferTerminalEmulator` and
+  `setAutoOpenTerminalEmulatorWindow` survive as no-ops so existing call sites compile.
+- Jar: 618 KB → 550 KB, 397 → 362 entries, zero `javax/swing` references.
+- `java.desktop` is still a `requires static`: `TerminalImage` rasterizes with
+  `BufferedImage`/`Graphics2D` and `TextColor` keeps its `java.awt.Color` helper.
+
+### `3.1.5-vis.37`
+
+- **The fork is Java 25 only.** `maven.compiler.release` is now `25` and the
+  multi-release layering is gone: `META-INF/versions/9` (`module-info`) and
+  `META-INF/versions/22` (the FFM `TTYDeviceControl`) are folded into the ordinary
+  `src/main/java` tree, and the jar no longer carries `Multi-Release: true`.
+  There is no "unsupported" `TTYDeviceControl` stub any more — the
+  `java.lang.foreign` implementation is the only one, matching the consumer
+  (vis, GraalVM CE 25).
+- The `/bin/stty` fallback in `UnixLikeTTYTerminal` **stays**: it covers an
+  unopenable `/dev/tty`, unknown platforms and failing syscalls, not old JDKs.
+- Measured on macOS/arm64 against a real pty: a save + canonical/echo/intr +
+  restore cycle is **0.117 ms native vs 11.1 ms via stty (~95x)**, and a window-size
+  query is **0.026 ms** (`ioctl`) versus an ANSI cursor round-trip.
+
+### `3.1.5-vis.36`
+
+- **New: native TTY control through the Java 22+ FFM API**
+  (`com.googlecode.lanterna.terminal.ansi.TTYDeviceControl`, Blockether-original).
+  `UnixLikeTTYTerminal` historically drove the controlling terminal by *forking
+  `/bin/stty`* — a process per attribute change, six per acquire/restore cycle — and
+  asked for the window size over ANSI (park the cursor at 5000,5000, read the reply),
+  which silently degrades to 80x24 whenever the reply is late or swallowed.
+  The class is shipped as a **multi-release layer** (`META-INF/versions/22`): the base
+  `src/main/java` class is an unsupported stub, so the jar still builds and runs on
+  Java 8+, while a Java 22+ runtime loads the `java.lang.foreign` implementation that
+  calls `open`/`close`/`tcgetattr`/`tcsetattr` and `ioctl(TIOCGWINSZ)` directly
+  (macOS and Linux `termios`/`winsize` offsets; `ioctl` linked with
+  `Linker.Option.firstVariadicArg(2)`, which Apple silicon requires).
+- **Every native call falls back to the old behaviour.** If the platform is unknown, the
+  runtime is older than 22, the symbol lookup fails, or any call returns `-1`, the
+  terminal transparently reverts to `stty` and the ANSI size query. Force the legacy
+  path with `-Dcom.googlecode.lanterna.terminal.UnixTerminal.nativeTTY=false`.
+- Callers must pass `--enable-native-access=ALL-UNNAMED` (JDK 24+ prints a restricted-
+  method warning otherwise, and a future JDK will refuse the call). In a GraalVM native
+  image the downcall `FunctionDescriptor`s must additionally be registered at build time
+  via `RuntimeForeignAccess.registerForDowncall`.
+
 ### `3.1.5-vis.31`
 
 - **Perf: ASCII fast paths for `truncateColumns` / `columnPrefixLength` /

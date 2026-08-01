@@ -47,15 +47,8 @@ public class TestTerminalFactory extends DefaultTerminalFactory {
                 setPreferTerminalEmulator(false);
                 setForceTextTerminal(true);
             }
-            else if("--awt".equals(arg)) {
-                setForceTextTerminal(false);
-                setPreferTerminalEmulator(true);
-                setForceAWTOverSwing(true);
-            }
-            else if("--swing".equals(arg)) {
-                setForceTextTerminal(false);
-                setPreferTerminalEmulator(true);
-                setForceAWTOverSwing(false);
+            else if("--awt".equals(arg) || "--swing".equals(arg)) {
+                // This fork has no graphical terminal emulator; these switches are accepted and ignored.
             }
             else if("--mouse-click".equals(arg)) {
                 setMouseCaptureMode(MouseCaptureMode.CLICK_RELEASE);

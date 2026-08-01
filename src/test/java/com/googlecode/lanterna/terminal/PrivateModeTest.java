@@ -22,7 +22,6 @@ import com.googlecode.lanterna.TestTerminalFactory;
 import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.input.KeyType;
 
-import java.awt.*;
 import java.io.IOException;
 
 /**
@@ -32,9 +31,7 @@ import java.io.IOException;
 public class PrivateModeTest {
 
     public static void main(String[] args) throws IOException, InterruptedException {
-        Terminal terminal = new TestTerminalFactory(args)
-                                .setTerminalEmulatorFrameAutoCloseTrigger(null)
-                                .createTerminal();
+        Terminal terminal = new TestTerminalFactory(args).createTerminal();
         boolean normalTerminal = true;
         printNormalTerminalText(terminal);
         KeyStroke keyStroke = null;
@@ -59,9 +56,6 @@ public class PrivateModeTest {
             terminal.exitPrivateMode();
         }
         terminal.putCharacter('\n');
-        if(terminal instanceof Window) {
-            ((Window) terminal).dispose();
-        }
     }
 
     private static void printNormalTerminalText(Terminal terminal) throws IOException {

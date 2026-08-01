@@ -18,17 +18,12 @@
  */
 package com.googlecode.lanterna.terminal.image;
 
-import java.awt.Graphics2D;
-import java.awt.RenderingHints;
-import java.awt.image.BufferedImage;
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import javax.imageio.ImageIO;
 
 /**
  * Inline terminal image rendering — Kitty graphics protocol / iTerm2 inline
@@ -56,12 +51,6 @@ import javax.imageio.ImageIO;
 public final class TerminalImage {
 
     private TerminalImage() {
-    }
-
-    static {
-        // A TUI JVM has no display; keep AWT/ImageIO off the windowing system so
-        // decoding a JPEG never tries to open one.
-        System.setProperty("java.awt.headless", "true");
     }
 
     /** Inline-image protocol spoken by the host terminal. */
@@ -149,6 +138,16 @@ public final class TerminalImage {
             cellW = w;
             cellH = h;
         }
+    }
+
+    /** The terminal's cell pixel width (see {@link #setCellDimensions}). */
+    public static int cellWidth() {
+        return cellW;
+    }
+
+    /** The terminal's cell pixel height (see {@link #setCellDimensions}). */
+    public static int cellHeight() {
+        return cellH;
     }
 
     // =========================================================================
@@ -437,79 +436,6 @@ public final class TerminalImage {
             String data = Base64.getEncoder().encodeToString(readHead(f, size));
             base64Cache.put(path, new Object[]{mtime, size, data});
             return data;
-        } catch (Throwable t) {
-            return null;
-        }
-    }
-
-    // [path|mtime|size|cols|rows] -> png base64. Decoding + re-encoding a
-    // multi-megapixel JPEG is expensive; cache the box-sized PNG so a scroll
-    // that re-emits the image doesn't re-run ImageIO each time.
-    private static final Map<String, String> pngTranscodeCache = new ConcurrentHashMap<>();
-
-    // Parallel cache of the transmitted PNG's [w, h] pixel size, keyed identically
-    // to pngTranscodeCache so a crop can size its source rectangle without a re-decode.
-    private static final Map<String, int[]> pngTranscodeDims = new ConcurrentHashMap<>();
-
-    /**
-     * Decode {@code path} (any ImageIO-readable format) and re-encode it as a
-     * PNG base64 string, downscaled so it fits the {@code cols}×{@code rows}
-     * cell box in pixels. The Kitty protocol's {@code f=100} only accepts PNG,
-     * so a JPEG/GIF/BMP drop must pass through here first. Uses AWT/ImageIO
-     * (JVM-only); returns {@code null} on any failure so callers fall back to a
-     * text card.
-     */
-    public static String transcodePngBase64(String path, int cols, int rows) {
-        Object[] r = transcodePng(path, cols, rows);
-        return r == null ? null : (String) r[0];
-    }
-
-    /**
-     * Like {@link #transcodePngBase64} but also reports the transmitted PNG's
-     * pixel dimensions as {@code [base64, width, height]} (or {@code null} on
-     * failure). The dimensions let a caller crop the image to a source rectangle
-     * via {@link #encodeKitty(String,int,int,int,int,int,int)}.
-     */
-    public static Object[] transcodePng(String path, int cols, int rows) {
-        try {
-            File f = new File(path);
-            String key = path + "|" + f.lastModified() + "|" + f.length() + "|" + cols + "|" + rows;
-            String hit = pngTranscodeCache.get(key);
-            int[] dhit = pngTranscodeDims.get(key);
-            if (hit != null && dhit != null) {
-                return new Object[]{hit, dhit[0], dhit[1]};
-            }
-            BufferedImage img = ImageIO.read(f);
-            if (img == null) {
-                return null;
-            }
-            long targetW = (long) cols * cellW;
-            long targetH = (long) rows * cellH;
-            int iw = img.getWidth();
-            int ih = img.getHeight();
-            double scale = Math.min(1.0, Math.min((double) targetW / iw, (double) targetH / ih));
-            int sw = (int) Math.max(1L, Math.round(iw * scale));
-            int sh = (int) Math.max(1L, Math.round(ih * scale));
-            BufferedImage scaled;
-            if (scale < 1.0) {
-                BufferedImage bi = new BufferedImage(sw, sh, BufferedImage.TYPE_INT_ARGB);
-                Graphics2D g = bi.createGraphics();
-                g.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
-                        RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-                g.drawImage(img, 0, 0, sw, sh, null);
-                g.dispose();
-                scaled = bi;
-            } else {
-                scaled = img;
-                sw = iw;
-                sh = ih;
-            }
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            ImageIO.write(scaled, "png", baos);
-            String data = Base64.getEncoder().encodeToString(baos.toByteArray());
-            pngTranscodeCache.put(key, data);
-            pngTranscodeDims.put(key, new int[]{sw, sh});
-            return new Object[]{data, sw, sh};
         } catch (Throwable t) {
             return null;
         }

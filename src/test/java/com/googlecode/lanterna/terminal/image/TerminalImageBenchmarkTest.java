@@ -20,13 +20,11 @@ package com.googlecode.lanterna.terminal.image;
 
 import static org.junit.Assert.assertTrue;
 
-import java.awt.image.BufferedImage;
 import java.io.File;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.function.LongSupplier;
-import javax.imageio.ImageIO;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -76,11 +74,10 @@ public class TerminalImageBenchmarkTest {
 
         File f = File.createTempFile("timg-bench", ".png");
         f.deleteOnExit();
-        ImageIO.write(new BufferedImage(600, 400, BufferedImage.TYPE_INT_ARGB), "png", f);
+        java.nio.file.Files.write(f.toPath(), new byte[64 * 1024]);
         pngFilePath = f.getAbsolutePath();
-        // Prime the caches so the benchmarked call measures the cache-hit path.
+        // Prime the cache so the benchmarked call measures the cache-hit path.
         TerminalImage.readBase64(pngFilePath);
-        TerminalImage.transcodePngBase64(pngFilePath, 20, 10);
     }
 
     /** Warm up, then time {@code iters} calls; returns ns/op. */
@@ -146,13 +143,10 @@ public class TerminalImageBenchmarkTest {
 
     @Test
     public void cacheHitsAreCheap() {
-        System.out.println("[TerminalImage bench] cache-hit read/transcode");
+        System.out.println("[TerminalImage bench] cache-hit read");
         double read = bench("readBase64(cache hit)", MEASURE / 4,
                 () -> TerminalImage.readBase64(pngFilePath).length());
-        double trans = bench("transcodePng(cache hit)", MEASURE / 4,
-                () -> TerminalImage.transcodePngBase64(pngFilePath, 20, 10).length());
         guard("readBase64", read, 200_000);
-        guard("transcodePngBase64", trans, 200_000);
     }
 
     @Test

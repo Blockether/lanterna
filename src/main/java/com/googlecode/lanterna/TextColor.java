@@ -18,7 +18,6 @@
  */
 package com.googlecode.lanterna;
 
-import java.awt.Color;
 import java.io.Serializable;
 import java.util.regex.Pattern;
 
@@ -60,15 +59,6 @@ public interface TextColor extends Serializable {
      * @return Blue intensity of this color, from 0 to 255
      */
     int getBlue();
-
-    /**
-     * Converts this color to an AWT color object, assuming a standard VGA palette.
-     * @return TextColor as an AWT Color
-     * @deprecated This adds a runtime dependency to the java.desktop module which isn't declared in the module
-     * descriptor of lanterna. If you want to call this method, make sure to add it to your module.
-     */
-    @Deprecated
-    Color toColor();
 
     /**
      * This class represent classic ANSI colors that are likely to be very compatible with most terminal
@@ -145,10 +135,6 @@ public interface TextColor extends Serializable {
             return blue;
         }
 
-        @Override
-        public Color toColor() {
-            return new Color(getRed(), getGreen(), getBlue());
-        }
     }
 
     /**
@@ -473,10 +459,6 @@ public interface TextColor extends Serializable {
             return COLOR_TABLE[colorIndex][2] & 0x000000ff;
         }
 
-        @Override
-        public Color toColor() {
-            return new Color(getRed(), getGreen(), getBlue());
-        }
 
         @Override
         public String toString() {
@@ -617,10 +599,6 @@ public interface TextColor extends Serializable {
             return blue;
         }
 
-        @Override
-        public Color toColor() {
-            return new Color(getRed(), getGreen(), getBlue());
-        }
 
         @Override
         public String toString() {

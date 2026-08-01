@@ -24,9 +24,6 @@ import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.input.KeyType;
 import com.googlecode.lanterna.terminal.Terminal;
 import com.googlecode.lanterna.TextColor;
-import com.googlecode.lanterna.terminal.swing.SwingTerminalFrame;
-
-import java.awt.*;
 import java.io.IOException;
 
 /**
@@ -35,15 +32,9 @@ import java.io.IOException;
  */
 public class MultiScreenTest {
     public static void main(String[] args) throws IOException, InterruptedException {
-        Terminal terminal = new TestTerminalFactory(args)
-                                .setTerminalEmulatorFrameAutoCloseTrigger(null)
-                                .createTerminal();
+        Terminal terminal = new TestTerminalFactory(args).createTerminal();
         Screen redScreen = new TerminalScreen(terminal);
         Screen greenScreen = new TerminalScreen(terminal);
-        
-        if(terminal instanceof SwingTerminalFrame) {
-            ((SwingTerminalFrame)terminal).setVisible(true);
-        }
         
         TextGraphics screenWriter = new ScreenTextGraphics(redScreen);
         screenWriter.setForegroundColor(TextColor.ANSI.BLACK);
@@ -91,8 +82,5 @@ public class MultiScreenTest {
             greenScreen.stopScreen();
         }
         terminal.clearScreen();
-        if(terminal instanceof Window) {
-            ((Window)terminal).dispose();
-        }
     }
 }

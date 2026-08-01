@@ -18,6 +18,8 @@
  */
 package com.googlecode.lanterna.terminal.ansi;
 
+import com.googlecode.lanterna.TerminalSize;
+
 import java.io.*;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
@@ -46,6 +48,16 @@ public abstract class UnixLikeTTYTerminal extends UnixLikeTerminal {
     private String sttyStatusToRestore;
 
     /**
+     * Direct termios/ioctl control of {@link #ttyDev}, or null when this runtime cannot do it (a
+     * pre-Java-22 JDK, an unsupported platform, a native image built without the foreign downcall
+     * metadata, or {@code -Dcom.googlecode.lanterna.terminal.UnixTerminal.nativeTTY=false}).
+     * <p>
+     * Every use is "try native, else stty": the field is cleared the first time a native call
+     * fails, so a half-working device can never wedge the terminal.
+     */
+    private TTYDeviceControl nativeControl;
+
+    /**
      * Creates a UnixTerminal using a specified input stream, output stream and character set, with a custom size
      * querier instead of using the default one. This way you can override size detection (if you want to force the
      * terminal to a fixed size, for example). You also choose how you want ctrl+c key strokes to be handled.
@@ -72,6 +84,7 @@ public abstract class UnixLikeTTYTerminal extends UnixLikeTerminal {
                 terminalCtrlCBehaviour);
 
         this.ttyDev = ttyDev;
+        this.nativeControl = openNativeControl(ttyDev);
 
         // Take ownership of the terminal
         realAcquire();
@@ -108,13 +121,70 @@ public abstract class UnixLikeTTYTerminal extends UnixLikeTerminal {
         }
     }
 
+    /**
+     * Opens direct (termios/ioctl) control of the TTY, or returns null if this runtime cannot do
+     * it. NEVER throws: no reason to lose the terminal because the fast path is unavailable.
+     */
+    private static TTYDeviceControl openNativeControl(File ttyDev) {
+        try {
+            if ("false".equals(String.valueOf(System.getProperty(TTYDeviceControl.NATIVE_TTY_PROPERTY, "")).trim().toLowerCase())) {
+                return null;
+            }
+            if (!TTYDeviceControl.isSupported()) {
+                return null;
+            }
+            return TTYDeviceControl.open(ttyDev);
+        }
+        catch (Throwable ignore) {
+            // Unsupported JDK/platform, no /dev/tty, or a native image without the foreign
+            // downcall metadata (MissingForeignRegistrationError) — fall back to /bin/stty.
+            return null;
+        }
+    }
+
+    /**
+     * @return the native control if it is still usable, else null (and permanently disabled)
+     */
+    private TTYDeviceControl nativeControl() {
+        return nativeControl;
+    }
+
+    /** One native call failed; drop to stty for the rest of this terminal's life. */
+    private void abandonNativeControl() {
+        TTYDeviceControl control = nativeControl;
+        nativeControl = null;
+        if(control != null) {
+            control.close();
+        }
+    }
+
     @Override
     protected void saveTerminalSettings() throws IOException {
+        TTYDeviceControl control = nativeControl();
+        if(control != null) {
+            try {
+                control.saveSettings();
+                return;
+            }
+            catch(Throwable ignore) {
+                abandonNativeControl();
+            }
+        }
         sttyStatusToRestore = runSTTYCommand("-g").trim();
     }
 
     @Override
     protected void restoreTerminalSettings() throws IOException {
+        TTYDeviceControl control = nativeControl();
+        if(control != null) {
+            try {
+                control.restoreSettings();
+                return;
+            }
+            catch(Throwable ignore) {
+                abandonNativeControl();
+            }
+        }
         if(sttyStatusToRestore != null) {
             runSTTYCommand(sttyStatusToRestore);
         }
@@ -122,11 +192,31 @@ public abstract class UnixLikeTTYTerminal extends UnixLikeTerminal {
 
     @Override
     protected void keyEchoEnabled(boolean enabled) throws IOException {
+        TTYDeviceControl control = nativeControl();
+        if(control != null) {
+            try {
+                control.setEcho(enabled);
+                return;
+            }
+            catch(Throwable ignore) {
+                abandonNativeControl();
+            }
+        }
         runSTTYCommand(enabled ? "echo" : "-echo");
     }
 
     @Override
     protected void canonicalMode(boolean enabled) throws IOException {
+        TTYDeviceControl control = nativeControl();
+        if(control != null) {
+            try {
+                control.setCanonicalMode(enabled);
+                return;
+            }
+            catch(Throwable ignore) {
+                abandonNativeControl();
+            }
+        }
         runSTTYCommand(enabled ? "icanon" : "-icanon");
         if(!enabled) {
             runSTTYCommand("min", "1");
@@ -135,11 +225,54 @@ public abstract class UnixLikeTTYTerminal extends UnixLikeTerminal {
 
     @Override
     protected void keyStrokeSignalsEnabled(boolean enabled) throws IOException {
+        TTYDeviceControl control = nativeControl();
+        if(control != null) {
+            try {
+                control.setInterruptCharacterEnabled(enabled);
+                return;
+            }
+            catch(Throwable ignore) {
+                abandonNativeControl();
+            }
+        }
         if(enabled) {
             runSTTYCommand("intr", "^C");
         }
         else {
             runSTTYCommand("intr", "undef");
+        }
+    }
+
+    /**
+     * Asks the kernel for the window size ({@code ioctl(TIOCGWINSZ)}) when direct TTY control is
+     * available. That is one syscall and it is exact; the inherited ANSI implementation instead
+     * parks the cursor at 5000,5000, asks the terminal to report it back and parses the reply,
+     * which costs a round-trip and silently returns 80x24 when the reply never arrives.
+     */
+    @Override
+    protected TerminalSize findTerminalSize() throws IOException {
+        TTYDeviceControl control = nativeControl();
+        if(control != null) {
+            try {
+                TerminalSize size = control.getSize();
+                if(size != null) {
+                    return size;
+                }
+            }
+            catch(Throwable ignore) {
+                abandonNativeControl();
+            }
+        }
+        return super.findTerminalSize();
+    }
+
+    @Override
+    public void close() throws IOException {
+        try {
+            super.close();
+        }
+        finally {
+            abandonNativeControl();
         }
     }
 

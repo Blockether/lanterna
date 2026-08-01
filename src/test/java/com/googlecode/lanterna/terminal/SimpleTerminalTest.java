@@ -24,7 +24,6 @@ import com.googlecode.lanterna.TextColor;
 import com.googlecode.lanterna.graphics.TextGraphics;
 import com.googlecode.lanterna.input.KeyStroke;
 
-import java.awt.*;
 import java.io.IOException;
 
 public class SimpleTerminalTest {
@@ -153,9 +152,6 @@ public class SimpleTerminalTest {
         terminal.putCharacter('\n');
         terminal.flush();
 
-        if(terminal instanceof Window) {
-            ((Window) terminal).dispose();
-        }
     }
 
     private static TerminalPosition resetCursorPositionAfterHelp(Terminal terminal) throws IOException {

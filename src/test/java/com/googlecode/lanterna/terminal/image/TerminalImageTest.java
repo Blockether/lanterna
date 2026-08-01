@@ -26,12 +26,10 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import com.googlecode.lanterna.terminal.image.TerminalImage.Protocol;
-import java.awt.image.BufferedImage;
 import java.io.File;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
-import javax.imageio.ImageIO;
 import org.junit.Test;
 
 /**
@@ -187,38 +185,5 @@ public class TerminalImageTest {
         assertArrayEquals(payload, Base64.getDecoder().decode(a));
         // Same path/mtime/size returns the identical cached string instance.
         assertEquals(a, TerminalImage.readBase64(f.getAbsolutePath()));
-    }
-
-    @Test
-    public void transcodePngBase64DownscalesIntoBox() throws Exception {
-        File f = File.createTempFile("timg-src", ".png");
-        f.deleteOnExit();
-        BufferedImage img = new BufferedImage(400, 200, BufferedImage.TYPE_INT_ARGB);
-        ImageIO.write(img, "png", f);
-
-        String data = TerminalImage.transcodePngBase64(f.getAbsolutePath(), 10, 5);
-        assertNotNull(data);
-        BufferedImage out = ImageIO.read(new java.io.ByteArrayInputStream(Base64.getDecoder().decode(data)));
-        assertNotNull(out);
-        // 10 cols * 9px = 90, 5 rows * 18px = 90 box; source 400x200 must shrink.
-        assertTrue("width fits box", out.getWidth() <= 90);
-        assertTrue("height fits box", out.getHeight() <= 90);
-        assertTrue("aspect preserved (wider than tall)", out.getWidth() >= out.getHeight());
-    }
-
-    @Test
-    public void transcodePngReportsTransmittedDimensions() throws Exception {
-        File f = File.createTempFile("timg-dims", ".png");
-        f.deleteOnExit();
-        ImageIO.write(new BufferedImage(800, 400, BufferedImage.TYPE_INT_ARGB), "png", f);
-        Object[] r = TerminalImage.transcodePng(f.getAbsolutePath(), 40, 20);
-        assertNotNull(r);
-        assertNotNull(r[0]);
-        int w = (Integer) r[1];
-        int h = (Integer) r[2];
-        // 40*9=360 x 20*18=360 box; source 800x400 scales by 0.45 to 360x180.
-        assertTrue("width fits box", w <= 360);
-        assertTrue("height fits box", h <= 360);
-        assertEquals("aspect preserved 2:1", w, h * 2);
     }
 }
