@@ -343,4 +343,151 @@ public class TerminalImageTest {
         assertFalse(fromBytes.contains("a=T"));
         assertFalse(fromBytes.contains(",c="));
     }
+
+    // ---- cell-size reports --------------------------------------------------
+
+    @Test
+    public void parsesTheDirectCellSizeReply() {
+        assertArrayEquals(new int[]{9, 18}, TerminalImage.parseCellSizeReport("\u001b[6;18;9t"));
+    }
+
+    @Test
+    public void derivesTheCellFromTextAreaPixelsAndCells() {
+        // 1600x900 px of text area over 100 cols x 30 rows => 16x30 px cells.
+        assertArrayEquals(new int[]{16, 30},
+                TerminalImage.parseCellSizeReport("\u001b[4;900;1600t\u001b[8;30;100t"));
+        // Any order, interleaved with whatever else the tty had queued.
+        assertArrayEquals(new int[]{8, 17},
+                TerminalImage.parseCellSizeReport("junk\u001b[8;40;120t\u001b[4;680;960tmore"));
+    }
+
+    @Test
+    public void aSilentOrUnparseableTerminalReportsNothing() {
+        assertNull(TerminalImage.parseCellSizeReport(null));
+        assertNull(TerminalImage.parseCellSizeReport(""));
+        assertNull(TerminalImage.parseCellSizeReport("random noise"));
+        assertNull(TerminalImage.parseCellSizeReport("\u001b[6;0;0t"));
+        // Truncated replies (no terminator, one parameter) are not half-believed.
+        assertNull(TerminalImage.parseCellSizeReport("\u001b[6;18;9"));
+        assertNull(TerminalImage.parseCellSizeReport("\u001b[6;18t"));
+    }
+
+    @Test
+    public void applyingAReportInstallsTheLiveCellMetrics() {
+        try {
+            assertTrue(TerminalImage.applyCellSizeReport("\u001b[6;20;10t"));
+            assertEquals(10, TerminalImage.cellWidth());
+            assertEquals(20, TerminalImage.cellHeight());
+            assertFalse(TerminalImage.applyCellSizeReport("nothing here"));
+            assertEquals(10, TerminalImage.cellWidth());
+        } finally {
+            TerminalImage.setCellDimensions(9, 18);
+        }
+    }
+
+    @Test
+    public void boxPixelsIsTheLongEdgeOfTheCellBox() {
+        try {
+            TerminalImage.setCellDimensions(10, 20);
+            assertEquals(800, TerminalImage.boxPixels(80, 24));
+            // A tall box wins on height.
+            assertEquals(1000, TerminalImage.boxPixels(20, 50));
+            // No row bound: width alone.
+            assertEquals(200, TerminalImage.boxPixels(20, 0));
+            // Never asks for a degenerate picture.
+            assertEquals(800, TerminalImage.boxPixels(0, 0));
+        } finally {
+            TerminalImage.setCellDimensions(9, 18);
+        }
+    }
+
+    // ---- placement of an already-transmitted image --------------------------
+
+    @Test
+    public void aFullPlacementReferencesTheImageIdAndCellBox() {
+        assertEquals("\u001b_Ga=p,i=5,p=1,C=1,q=2,c=10,r=6\u001b\\",
+                TerminalImage.placeKitty(5, 10, 6));
+    }
+
+    @Test
+    public void aCroppedPlacementUsesTheSameSourceRectangleAsTheDisplayPath() {
+        // crop-top 2 of 6 rows over a 120px-tall image => y=40; 3 visible rows => h=60.
+        assertEquals("\u001b_Ga=p,i=5,p=1,C=1,q=2,c=10,r=3,x=0,y=40,w=100,h=60\u001b\\",
+                TerminalImage.placeKitty(5, 10, 6, 2, 1, 100, 120));
+        // The transmit+display header computes the identical rectangle.
+        assertTrue(TerminalImage.encodeKitty("", 10, 6, 2, 1, 100, 120)
+                .contains(",r=3,x=0,y=40,w=100,h=60"));
+    }
+
+    @Test
+    public void deletingAPlacementKeepsTheDataAndFreeingDropsIt() {
+        assertEquals("\u001b_Ga=d,d=i,i=5,q=2\u001b\\", TerminalImage.deleteKittyPlacement(5));
+        assertEquals("\u001b_Ga=d,d=I,i=5,q=2\u001b\\", TerminalImage.freeKittyImage(5));
+    }
+
+    // ---- still images wearing a movie's container ---------------------------
+
+    @Test
+    public void heifAndAvifAreNotVideosDespiteTheFtypBox() {
+        assertTrue(TerminalImage.isVideoHead(head("isom")));
+        assertTrue(TerminalImage.isVideoHead(head("qt  ")));
+        assertNull(TerminalImage.videoMime(head("heic")));
+        assertNull(TerminalImage.videoMime(head("HEIC")));
+        assertNull(TerminalImage.videoMime(head("avif")));
+        assertNull(TerminalImage.videoMime(head("mif1")));
+        assertFalse(TerminalImage.isVideoHead(null));
+        assertFalse(TerminalImage.isVideoHead(new byte[3]));
+    }
+
+    /** A 16-byte ISO-BMFF head carrying major brand {@code brand}. */
+    private static byte[] head(String brand) {
+        byte[] b = new byte[16];
+        b[3] = 16;
+        byte[] ftyp = "ftyp".getBytes(StandardCharsets.US_ASCII);
+        byte[] br = brand.getBytes(StandardCharsets.US_ASCII);
+        System.arraycopy(ftyp, 0, b, 4, 4);
+        System.arraycopy(br, 0, b, 8, Math.min(4, br.length));
+        return b;
+    }
+
+    @Test
+    public void aMissingPathIsNeverAVideoSource() {
+        assertFalse(TerminalImage.isVideoFile("/nope/missing.mp4"));
+        assertFalse(TerminalImage.isVideoFile(null));
+        // A known mime still answers without touching the disk.
+        assertTrue(TerminalImage.isVideoSource("/nope/missing.mp4", "video/mp4"));
+        assertFalse(TerminalImage.isVideoSource("/nope/missing.png", "image/png"));
+    }
+
+    // ---- dropped paths ------------------------------------------------------
+
+    @Test
+    public void aDroppedPathIsUnquotedUnescapedAndDeUrled() {
+        assertEquals("/tmp/a clip.mp4", TerminalImage.pastedVideoPath("  '/tmp/a clip.mp4'  "));
+        assertEquals("/tmp/a clip.mp4", TerminalImage.pastedVideoPath("/tmp/a\\ clip.mp4"));
+        assertEquals("/tmp/clip.MOV", TerminalImage.pastedVideoPath("file:///tmp/clip.MOV"));
+        assertEquals(System.getProperty("user.home") + "/clip.m4v",
+                TerminalImage.pastedVideoPath("~/clip.m4v"));
+    }
+
+    @Test
+    public void proseAndNonClipsAreNotDrops() {
+        assertNull(TerminalImage.pastedVideoPath(null));
+        assertNull(TerminalImage.pastedVideoPath("   "));
+        assertNull(TerminalImage.pastedVideoPath("see /tmp/clip.mp4 for details"));
+        assertNull(TerminalImage.pastedVideoPath("/tmp/a.mp4\n/tmp/b.mp4"));
+        assertNull(TerminalImage.pastedVideoPath("/tmp/photo.png"));
+        assertEquals("/tmp/photo.png", TerminalImage.pastedFilePath("/tmp/photo.png"));
+    }
+
+    @Test
+    public void everyKnownMimeRoundTripsToItsOwnExtension() {
+        assertEquals(".png", TerminalImage.extensionForMime("image/png"));
+        assertEquals(".jpg", TerminalImage.extensionForMime("image/jpeg"));
+        // A clip keeps ITS extension: a .png-named MP4 is neither playable nor probeable.
+        assertEquals(".mp4", TerminalImage.extensionForMime("video/mp4"));
+        assertEquals(".mov", TerminalImage.extensionForMime("video/quicktime"));
+        assertNull(TerminalImage.extensionForMime("application/pdf"));
+        assertNull(TerminalImage.extensionForMime(null));
+    }
 }
