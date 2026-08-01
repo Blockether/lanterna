@@ -704,6 +704,25 @@ public final class TerminalImage {
         return acc.append('\u0007').toString();
     }
 
+    /**
+     * Kitty {@code a=t} transmit-ONLY sequence: upload {@code data} under client
+     * image id {@code id} WITHOUT displaying it, chunked exactly like
+     * {@link #encodeKitty(String,int,int)}. A later {@code a=p} placement draws it
+     * with no re-upload, which is what makes scrolling an image flicker-free.
+     */
+    public static String transmitKitty(String data, int id) {
+        return emitKitty(transmitHead(id), data);
+    }
+
+    /** {@link #transmitKitty(String,int)} for a RAW payload (PNG bytes). */
+    public static String transmitKitty(byte[] data, int id) {
+        return emitKitty(transmitHead(id), data);
+    }
+
+    private static String transmitHead(int id) {
+        return "a=t,i=" + id + ",f=100,q=2";
+    }
+
     // path -> {mtime, size, data}. Images are re-emitted on every scroll that
     // moves them; caching keeps a 5MB file off the read+encode path each time.
     private static final Map<String, Object[]> base64Cache = new ConcurrentHashMap<>();

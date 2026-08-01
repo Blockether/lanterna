@@ -325,4 +325,22 @@ public class TerminalImageTest {
                     TerminalImage.encodeIterm2(raw, 40));
         }
     }
+
+    @Test
+    public void transmitOnlySequenceChunksLikeTheDisplayPath() {
+        // Bigger than one chunk, so the m=1 continuation path is exercised.
+        byte[] raw = new byte[9000];
+        for (int i = 0; i < raw.length; i++) {
+            raw[i] = (byte) (i * 31);
+        }
+        String b64 = Base64.getEncoder().encodeToString(raw);
+        String fromBytes = TerminalImage.transmitKitty(raw, 9901);
+        assertEquals(TerminalImage.transmitKitty(b64, 9901), fromBytes);
+        assertTrue(fromBytes.startsWith("\u001b_Ga=t,i=9901,f=100,q=2,m=1;"));
+        assertTrue(fromBytes.contains("\u001b_Gm=0;"));
+        assertTrue(fromBytes.endsWith("\u001b\\"));
+        // Transmit never displays: no placement keys ride along.
+        assertFalse(fromBytes.contains("a=T"));
+        assertFalse(fromBytes.contains(",c="));
+    }
 }
