@@ -241,6 +241,194 @@ public final class TerminalImage {
         return b.length >= 26 ? new int[]{(int) u32le(b, 18), Math.abs((int) u32le(b, 22))} : null;
     }
 
+    // =========================================================================
+    // Video (ISO-BMFF / MP4) — display size without decoding a frame
+    // =========================================================================
+
+    /**
+     * Largest {@code moov} box pulled into memory while looking for a track
+     * header. A track header is a few hundred bytes; anything past this is a
+     * pathological (or hostile) file and is simply not probed.
+     */
+    private static final int MAX_MOOV = 32 * 1024 * 1024;
+
+    private static long u64be(byte[] b, int i) {
+        return (u32be(b, i) << 32) + u32be(b, i + 4);
+    }
+
+    /** True when {@code head} starts an ISO-BMFF container (a {@code ftyp} box at byte 4). */
+    public static boolean isVideoHead(byte[] head) {
+        return head != null && head.length >= 12 && "ftyp".equals(ascii(head, 4, 4));
+    }
+
+    /**
+     * Mime for an ISO-BMFF head, from its major brand: {@code qt  } is QuickTime,
+     * every other brand ({@code isom}, {@code mp42}, {@code avc1}, {@code M4V }, …)
+     * is {@code video/mp4}. {@code null} when the bytes are not a container.
+     */
+    public static String videoMime(byte[] head) {
+        if (!isVideoHead(head)) {
+            return null;
+        }
+        return "qt  ".equals(ascii(head, 8, 4)) ? "video/quicktime" : "video/mp4";
+    }
+
+    /** Content-sniffed mime of {@code path} when it is a video container, else {@code null}. */
+    public static String probeVideoMime(String path) {
+        try {
+            return videoMime(readHead(new File(path), 12));
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** True for the mimes {@link #imageDimensions} resolves through the MP4 box walk. */
+    public static boolean isVideoMime(String mime) {
+        return "video/mp4".equals(mime)
+                || "video/quicktime".equals(mime)
+                || "video/x-m4v".equals(mime)
+                || "video/mpeg4".equals(mime);
+    }
+
+    /**
+     * {@code [w, h]} from a {@code tkhd} payload — the track's DISPLAY size as
+     * 16.16 fixed point, honouring a 90°/270° display matrix (what a phone writes
+     * for a portrait capture). {@code null} for a non-visual track, whose header
+     * carries zeros.
+     */
+    private static int[] tkhdDims(byte[] b, int off, int end) {
+        if (end - off < 4) {
+            return null;
+        }
+        // version+flags, then v0 {creation, modification, id, reserved, duration}
+        // as 32-bit fields (20 bytes) or v1 the same with 64-bit times (32 bytes).
+        int base = off + 4 + (u8(b, off) == 1 ? 32 : 20);
+        int matrix = base + 16;
+        int dims = matrix + 36;
+        if (dims + 8 > end) {
+            return null;
+        }
+        int w = (int) (u32be(b, dims) >> 16);
+        int h = (int) (u32be(b, dims + 4) >> 16);
+        if (w <= 0 || h <= 0) {
+            return null;
+        }
+        // Matrix {a b u / c d v / x y w}: a pure 90°/270° rotation zeroes a and d,
+        // so the picture the viewer sees is the track box turned on its side.
+        if (u32be(b, matrix) == 0 && u32be(b, matrix + 16) == 0
+                && u32be(b, matrix + 4) != 0 && u32be(b, matrix + 12) != 0) {
+            return new int[]{h, w};
+        }
+        return new int[]{w, h};
+    }
+
+    /**
+     * Walk ISO-BMFF boxes in {@code b[off, end)}, descending {@code moov}/{@code trak}
+     * to the first visual {@code tkhd}. Tolerates a TRUNCATED buffer (a file head):
+     * a box that runs past {@code end} is parsed as far as it was read and then ends
+     * the walk, so a faststart clip answers from its first few kilobytes.
+     */
+    private static int[] boxDims(byte[] b, int off, int end) {
+        while (off + 8 <= end) {
+            long size = u32be(b, off);
+            String type = ascii(b, off + 4, 4);
+            int header = 8;
+            if (size == 1) {
+                if (off + 16 > end) {
+                    return null;
+                }
+                size = u64be(b, off + 8);
+                header = 16;
+            } else if (size == 0) {
+                size = end - off;
+            }
+            if (size < header) {
+                return null;
+            }
+            long boxEnd = off + size;
+            int stop = (int) Math.min(boxEnd, end);
+            if ("moov".equals(type) || "trak".equals(type)) {
+                int[] d = boxDims(b, off + header, stop);
+                if (d != null) {
+                    return d;
+                }
+            } else if ("tkhd".equals(type)) {
+                int[] d = tkhdDims(b, off + header, stop);
+                if (d != null) {
+                    return d;
+                }
+            }
+            if (boxEnd > end) {
+                return null;
+            }
+            off = (int) boxEnd;
+        }
+        return null;
+    }
+
+    /**
+     * {@code [w, h]} of the first visual track in {@code f}, by SEEKING over the
+     * top-level boxes to {@code moov} — a clip whose media data sits before its
+     * track headers costs a handful of seeks, never a read of the samples.
+     */
+    private static int[] mp4Dims(File f) {
+        try (RandomAccessFile raf = new RandomAccessFile(f, "r")) {
+            long len = raf.length();
+            long pos = 0;
+            byte[] hdr = new byte[16];
+            while (pos + 8 <= len) {
+                raf.seek(pos);
+                raf.readFully(hdr, 0, 8);
+                long size = u32be(hdr, 0);
+                String type = ascii(hdr, 4, 4);
+                int header = 8;
+                if (size == 1) {
+                    if (pos + 16 > len) {
+                        return null;
+                    }
+                    raf.readFully(hdr, 8, 8);
+                    size = u64be(hdr, 8);
+                    header = 16;
+                } else if (size == 0) {
+                    size = len - pos;
+                }
+                if (size < header) {
+                    return null;
+                }
+                if ("moov".equals(type)) {
+                    long payload = size - header;
+                    if (payload <= 0 || payload > MAX_MOOV) {
+                        return null;
+                    }
+                    byte[] buf = new byte[(int) payload];
+                    raf.seek(pos + header);
+                    raf.readFully(buf);
+                    return boxDims(buf, 0, buf.length);
+                }
+                pos += size;
+            }
+            return null;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
+     * Display {@code [w, h]} of the video at {@code path} without decoding a
+     * frame — the head first (a faststart clip answers there), then a seek walk
+     * to {@code moov}. {@code null} when it is not a container this understands.
+     */
+    public static int[] probeVideoDimensions(String path) {
+        try {
+            File f = new File(path);
+            byte[] head = readHead(f, 4100);
+            int[] fromHead = boxDims(head, 0, head.length);
+            return fromHead != null ? fromHead : mp4Dims(f);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
     /**
      * Intrinsic {@code [w, h]} pixel size from the leading bytes of an image, or
      * {@code null} when the mime is unsupported / the bytes are too short.
@@ -262,7 +450,7 @@ public final class TerminalImage {
                 case "image/bmp":
                     return bmpDims(b);
                 default:
-                    return null;
+                    return isVideoMime(mime) ? boxDims(b, 0, b.length) : null;
             }
         } catch (Throwable t) {
             return null;
@@ -284,7 +472,13 @@ public final class TerminalImage {
      */
     public static int[] probeDimensions(String path, String mime) {
         try {
-            return imageDimensions(readHead(new File(path), 4100), mime);
+            File f = new File(path);
+            byte[] head = readHead(f, 4100);
+            if (isVideoMime(mime) || (mime == null && isVideoHead(head))) {
+                int[] fromHead = boxDims(head, 0, head.length);
+                return fromHead != null ? fromHead : mp4Dims(f);
+            }
+            return imageDimensions(head, mime);
         } catch (Throwable t) {
             return null;
         }
@@ -329,6 +523,11 @@ public final class TerminalImage {
      * when positive). {@code C=1} keeps the cursor put after placement.
      */
     public static String encodeKitty(String data, int cols, int rows) {
+        return emitKitty(kittyHead(cols, rows), data);
+    }
+
+    /** Transmit+display header for a whole image in a {@code cols}×{@code rows} box. */
+    private static String kittyHead(int cols, int rows) {
         StringBuilder head = new StringBuilder("a=T,f=100,q=2,C=1");
         if (cols > 0) {
             head.append(",c=").append(cols);
@@ -336,7 +535,7 @@ public final class TerminalImage {
         if (rows > 0) {
             head.append(",r=").append(rows);
         }
-        return emitKitty(head.toString(), data);
+        return head.toString();
     }
 
     /**
@@ -353,6 +552,13 @@ public final class TerminalImage {
     public static String encodeKitty(String data, int cols, int rows,
                                      int cropTopRows, int cropBottomRows,
                                      int imgW, int imgH) {
+        return emitKitty(croppedKittyHead(cols, rows, cropTopRows, cropBottomRows, imgW, imgH), data);
+    }
+
+    /** Transmit+display header for the visible vertical slice of a cropped image. */
+    private static String croppedKittyHead(int cols, int rows,
+                                           int cropTopRows, int cropBottomRows,
+                                           int imgW, int imgH) {
         int ct = Math.max(0, cropTopRows);
         int cb = Math.max(0, cropBottomRows);
         int visRows = rows - ct - cb;
@@ -360,7 +566,7 @@ public final class TerminalImage {
             visRows = 1;
         }
         if ((ct == 0 && cb == 0) || rows <= 0 || imgH <= 0) {
-            return encodeKitty(data, cols, visRows);
+            return kittyHead(cols, visRows);
         }
         long y = Math.round((double) imgH * ct / rows);
         long h = Math.round((double) imgH * visRows / rows);
@@ -380,7 +586,7 @@ public final class TerminalImage {
             head.append(",w=").append(imgW);
         }
         head.append(",h=").append(h);
-        return emitKitty(head.toString(), data);
+        return head.toString();
     }
 
     /** Chunk {@code data} into a Kitty {@code _G} transmit sequence for header {@code h}. */
@@ -412,6 +618,90 @@ public final class TerminalImage {
     /** iTerm2 {@code \u001b]1337;File=} inline-image sequence for base64 {@code data}. */
     public static String encodeIterm2(String data, int cols) {
         return ESC + "]1337;File=inline=1;width=" + cols + ";height=auto;preserveAspectRatio=1:" + data + "\u0007";
+    }
+
+    // ---- byte[] payloads: base64 straight into the escape ------------------
+    //
+    // A video is a STREAM of stills: every frame is encoded, base64'd and chunked
+    // again. Handing these methods the raw bytes keeps the full-size base64 String
+    // (1.33x the payload, live until the escape is built) off the heap entirely —
+    // the payload is encoded one 3 KiB slice at a time, straight into the escape's
+    // own buffer, which is pre-sized so it never grows.
+
+    private static final Base64.Encoder B64 = Base64.getEncoder();
+
+    /** Raw bytes whose base64 is exactly {@link #KITTY_CHUNK} characters. */
+    private static final int KITTY_RAW_CHUNK = KITTY_CHUNK / 4 * 3;
+
+    /** Base64 length of {@code n} bytes. */
+    private static int b64Length(int n) {
+        return 4 * ((n + 2) / 3);
+    }
+
+    /** Append the base64 of {@code data[off, off + len)} to {@code acc} without an intermediate copy. */
+    private static void appendBase64(StringBuilder acc, byte[] data, int off, int len) {
+        java.nio.ByteBuffer out = B64.encode(java.nio.ByteBuffer.wrap(data, off, len));
+        acc.append(new String(out.array(), out.arrayOffset() + out.position(), out.remaining(),
+                StandardCharsets.ISO_8859_1));
+    }
+
+    /** Chunk the base64 of {@code data} into a Kitty {@code _G} transmit sequence for header {@code h}. */
+    private static String emitKitty(String h, byte[] data) {
+        int n = data.length;
+        int b64 = b64Length(n);
+        if (b64 <= KITTY_CHUNK) {
+            StringBuilder acc = new StringBuilder(b64 + h.length() + 6);
+            acc.append(ESC).append("_G").append(h).append(';');
+            appendBase64(acc, data, 0, n);
+            return acc.append(ESC).append('\\').toString();
+        }
+        int chunks = (n + KITTY_RAW_CHUNK - 1) / KITTY_RAW_CHUNK;
+        StringBuilder acc = new StringBuilder(b64 + h.length() + 10 + chunks * 12);
+        int off = 0;
+        boolean first = true;
+        while (off < n) {
+            int len = Math.min(KITTY_RAW_CHUNK, n - off);
+            boolean last = off + len >= n;
+            if (first) {
+                acc.append(ESC).append("_G").append(h).append(",m=1;");
+            } else {
+                acc.append(ESC).append(last ? "_Gm=0;" : "_Gm=1;");
+            }
+            appendBase64(acc, data, off, len);
+            acc.append(ESC).append('\\');
+            off += len;
+            first = false;
+        }
+        return acc.toString();
+    }
+
+    /**
+     * {@link #encodeKitty(String,int,int)} for a RAW payload (PNG bytes), base64'd
+     * as it is chunked. Byte-identical output, without materialising the base64.
+     */
+    public static String encodeKitty(byte[] data, int cols, int rows) {
+        return emitKitty(kittyHead(cols, rows), data);
+    }
+
+    /**
+     * {@link #encodeKitty(String,int,int,int,int,int,int)} for a RAW payload — the
+     * per-frame path for video playback, where the payload changes every frame and
+     * nothing can be cached.
+     */
+    public static String encodeKitty(byte[] data, int cols, int rows,
+                                     int cropTopRows, int cropBottomRows,
+                                     int imgW, int imgH) {
+        String h = croppedKittyHead(cols, rows, cropTopRows, cropBottomRows, imgW, imgH);
+        return emitKitty(h, data);
+    }
+
+    /** iTerm2 inline-image sequence for a RAW payload. */
+    public static String encodeIterm2(byte[] data, int cols) {
+        StringBuilder acc = new StringBuilder(b64Length(data.length) + 64);
+        acc.append(ESC).append("]1337;File=inline=1;width=").append(cols)
+                .append(";height=auto;preserveAspectRatio=1:");
+        appendBase64(acc, data, 0, data.length);
+        return acc.append('\u0007').toString();
     }
 
     // path -> {mtime, size, data}. Images are re-emitted on every scroll that

@@ -27,6 +27,8 @@ import static org.junit.Assert.assertTrue;
 
 import com.googlecode.lanterna.terminal.image.TerminalImage.Protocol;
 import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
@@ -185,5 +187,142 @@ public class TerminalImageTest {
         assertArrayEquals(payload, Base64.getDecoder().decode(a));
         // Same path/mtime/size returns the identical cached string instance.
         assertEquals(a, TerminalImage.readBase64(f.getAbsolutePath()));
+    }
+// ---- video (ISO-BMFF/MP4) probing --------------------------------------
+
+    private static byte[] u32(long v) {
+        return new byte[]{(byte) (v >>> 24), (byte) (v >>> 16), (byte) (v >>> 8), (byte) v};
+    }
+
+    private static byte[] cat(byte[]... parts) {
+        int n = 0;
+        for (byte[] p : parts) {
+            n += p.length;
+        }
+        byte[] out = new byte[n];
+        int off = 0;
+        for (byte[] p : parts) {
+            System.arraycopy(p, 0, out, off, p.length);
+            off += p.length;
+        }
+        return out;
+    }
+
+    /** ISO-BMFF box: 32-bit size, 4-char type, payload. */
+    private static byte[] box(String type, byte[] payload) {
+        return cat(u32(8 + payload.length), type.getBytes(StandardCharsets.US_ASCII), payload);
+    }
+
+    /**
+     * A version-0 {@code tkhd} payload declaring {@code w}x{@code h} in 16.16 fixed
+     * point, with either the identity display matrix or a 90 degree rotation.
+     */
+    private static byte[] tkhd(int w, int h, boolean rotated) {
+        byte[] p = new byte[84];
+        // 0: version+flags, 4..24: creation/modification/id/reserved/duration,
+        // 24..40: reserved/layer/alternate_group/volume/reserved.
+        long one = 0x00010000L;
+        long[] matrix = rotated
+                ? new long[]{0, one, 0, 0xFFFF0000L, 0, 0, 0, 0, 0x40000000L}
+                : new long[]{one, 0, 0, 0, one, 0, 0, 0, 0x40000000L};
+        for (int i = 0; i < 9; i++) {
+            System.arraycopy(u32(matrix[i]), 0, p, 40 + i * 4, 4);
+        }
+        System.arraycopy(u32((long) w << 16), 0, p, 76, 4);
+        System.arraycopy(u32((long) h << 16), 0, p, 80, 4);
+        return p;
+    }
+
+    private static byte[] ftyp() {
+        return box("ftyp", "isomiso2avc1mp41".getBytes(StandardCharsets.US_ASCII));
+    }
+
+    /** `moov` carrying a silent audio track (all-zero tkhd) before the video track. */
+    private static byte[] moov(int w, int h, boolean rotated) {
+        byte[] audio = box("trak", box("tkhd", new byte[84]));
+        byte[] video = box("trak", box("tkhd", tkhd(w, h, rotated)));
+        return box("moov", cat(audio, video));
+    }
+
+    @Test
+    public void mp4DimensionsComeFromTheVideoTrackHeader() {
+        byte[] clip = cat(ftyp(), moov(1920, 1080, false));
+        assertArrayEquals(new int[]{1920, 1080}, TerminalImage.imageDimensions(clip, "video/mp4"));
+        assertArrayEquals(new int[]{1920, 1080}, TerminalImage.imageDimensions(clip, "video/quicktime"));
+        // A still mime must never be answered by the box walk (pngDims is
+        // signature-lenient, so it may invent numbers — it must not invent these).
+        assertFalse(Arrays.equals(new int[]{1920, 1080}, TerminalImage.imageDimensions(clip, "image/png")));
+        assertNull(TerminalImage.imageDimensions(clip, "image/svg+xml"));
+    }
+
+    @Test
+    public void mp4RotationMatrixSwapsTheDisplaySize() {
+        byte[] portrait = cat(ftyp(), moov(1920, 1080, true));
+        assertArrayEquals(new int[]{1080, 1920}, TerminalImage.imageDimensions(portrait, "video/mp4"));
+    }
+
+    @Test
+    public void videoHeadIsSniffedByContent() {
+        byte[] clip = cat(ftyp(), moov(64, 48, false));
+        assertTrue(TerminalImage.isVideoHead(clip));
+        assertEquals("video/mp4", TerminalImage.videoMime(clip));
+        assertFalse(TerminalImage.isVideoHead(new byte[]{(byte) 0x89, 'P', 'N', 'G', 13, 10, 26, 10, 0, 0, 0, 13}));
+        assertNull(TerminalImage.videoMime(new byte[]{1, 2, 3}));
+        assertTrue(TerminalImage.isVideoMime("video/mp4"));
+        assertFalse(TerminalImage.isVideoMime("image/gif"));
+    }
+
+    @Test
+    public void probesAVideoWhoseTrackHeadersFollowTheSamples() throws Exception {
+        // Not faststart: 8 KiB of media data sit before `moov`, past any file head,
+        // so only the seek walk can answer.
+        byte[] mdat = box("mdat", new byte[8192]);
+        byte[] clip = cat(ftyp(), mdat, moov(640, 360, false));
+        File f = File.createTempFile("lanterna-probe", ".mp4");
+        f.deleteOnExit();
+        java.nio.file.Files.write(f.toPath(), clip);
+        String path = f.getAbsolutePath();
+        assertArrayEquals(new int[]{640, 360}, TerminalImage.probeVideoDimensions(path));
+        assertArrayEquals(new int[]{640, 360}, TerminalImage.probeDimensions(path, "video/mp4"));
+        // Mime-less probing falls back to the content sniff.
+        assertArrayEquals(new int[]{640, 360}, TerminalImage.probeDimensions(path, null));
+        assertEquals("video/mp4", TerminalImage.probeVideoMime(path));
+        assertNull(TerminalImage.probeVideoDimensions(path + ".missing"));
+    }
+
+    @Test
+    public void probesAFaststartVideoFromItsHeadAlone() throws Exception {
+        byte[] clip = cat(ftyp(), moov(320, 240, false), box("mdat", new byte[64]));
+        File f = File.createTempFile("lanterna-faststart", ".mp4");
+        f.deleteOnExit();
+        java.nio.file.Files.write(f.toPath(), clip);
+        assertArrayEquals(new int[]{320, 240}, TerminalImage.probeVideoDimensions(f.getAbsolutePath()));
+    }
+
+    // ---- raw-payload escape encoding ---------------------------------------
+
+    private static byte[] payload(int n) {
+        byte[] b = new byte[n];
+        for (int i = 0; i < n; i++) {
+            b[i] = (byte) (i * 31 + (i >> 3));
+        }
+        return b;
+    }
+
+    @Test
+    public void rawKittyEncodingMatchesTheBase64StringPath() {
+        for (int n : new int[]{1, 3, 1000, 3072, 3073, 4096, 100_000}) {
+            byte[] raw = payload(n);
+            String b64 = Base64.getEncoder().encodeToString(raw);
+            assertEquals("n=" + n,
+                    TerminalImage.encodeKitty(b64, 40, 12),
+                    TerminalImage.encodeKitty(raw, 40, 12));
+            assertEquals("cropped n=" + n,
+                    TerminalImage.encodeKitty(b64, 40, 12, 2, 3, 640, 480),
+                    TerminalImage.encodeKitty(raw, 40, 12, 2, 3, 640, 480));
+            assertEquals("iterm2 n=" + n,
+                    TerminalImage.encodeIterm2(b64, 40),
+                    TerminalImage.encodeIterm2(raw, 40));
+        }
     }
 }
