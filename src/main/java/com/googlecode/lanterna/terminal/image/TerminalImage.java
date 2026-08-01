@@ -150,6 +150,83 @@ public final class TerminalImage {
         return cellH;
     }
 
+    /**
+     * Parse a terminal window-report reply into the CELL pixel size {@code [w, h]},
+     * or {@code null} when the reply says nothing usable.
+     *
+     * <p>Recognises the {@code CSI 16 t} cell-size reply {@code ESC[6;<h>;<w>t}
+     * directly, and otherwise derives the cell from a {@code CSI 14 t}
+     * text-area-pixels reply {@code ESC[4;<hpx>;<wpx>t} paired with a
+     * {@code CSI 18 t} text-area-cells reply {@code ESC[8;<rows>;<cols>t}
+     * (cell = px / cells). The replies may arrive concatenated, in any order and
+     * interleaved with other bytes, which is what a real terminal delivers.
+     */
+    public static int[] parseCellSizeReport(String s) {
+        if (s == null || s.isEmpty()) {
+            return null;
+        }
+        int[] cell = csiPair(s, 6);
+        if (cell != null && cell[0] > 0 && cell[1] > 0) {
+            return new int[]{cell[1], cell[0]};
+        }
+        int[] px = csiPair(s, 4);
+        int[] cells = csiPair(s, 8);
+        if (px == null || cells == null
+                || px[0] <= 0 || px[1] <= 0 || cells[0] <= 0 || cells[1] <= 0) {
+            return null;
+        }
+        return new int[]{px[1] / cells[1], px[0] / cells[0]};
+    }
+
+    /**
+     * Read the cell size out of {@code report} and install it via
+     * {@link #setCellDimensions}. True when the reply was usable.
+     */
+    public static boolean applyCellSizeReport(String report) {
+        int[] wh = parseCellSizeReport(report);
+        if (wh == null) {
+            return false;
+        }
+        setCellDimensions(wh[0], wh[1]);
+        return true;
+    }
+
+    /**
+     * The two parameters of an {@code ESC[<code>;<a>;<b>t} reply anywhere in
+     * {@code s}, or {@code null}. Scanned rather than matched with a regex: this runs
+     * on the startup probe's raw input buffer, which holds whatever the tty had
+     * queued, and it runs before the first frame is drawn.
+     */
+    private static int[] csiPair(String s, int code) {
+        String needle = ESC + "[" + code + ";";
+        int n = s.length();
+        for (int i = s.indexOf(needle); i >= 0; i = s.indexOf(needle, i + 1)) {
+            int p = i + needle.length();
+            long a = 0;
+            int da = 0;
+            while (p < n && s.charAt(p) >= '0' && s.charAt(p) <= '9') {
+                a = a * 10 + (s.charAt(p++) - '0');
+                da++;
+            }
+            if (da == 0 || p >= n || s.charAt(p) != ';') {
+                continue;
+            }
+            p++;
+            long b = 0;
+            int db = 0;
+            while (p < n && s.charAt(p) >= '0' && s.charAt(p) <= '9') {
+                b = b * 10 + (s.charAt(p++) - '0');
+                db++;
+            }
+            if (db == 0 || p >= n || s.charAt(p) != 't'
+                    || a > Integer.MAX_VALUE || b > Integer.MAX_VALUE) {
+                continue;
+            }
+            return new int[]{(int) a, (int) b};
+        }
+        return null;
+    }
+
     // =========================================================================
     // Intrinsic pixel-dimension sniffing (pi getImageDimensions parity)
     // =========================================================================
@@ -256,9 +333,24 @@ public final class TerminalImage {
         return (u32be(b, i) << 32) + u32be(b, i + 4);
     }
 
-    /** True when {@code head} starts an ISO-BMFF container (a {@code ftyp} box at byte 4). */
+    /**
+     * ISO-BMFF brands that are STILL IMAGES in an MP4-shaped box structure. HEIF and
+     * AVIF carry the very same {@code ftyp} signature as a movie, so brand-blind
+     * sniffing would hand a photo to a video decoder.
+     */
+    private static final java.util.Set<String> STILL_IMAGE_BRANDS = new java.util.HashSet<>(
+            java.util.Arrays.asList("heic", "heix", "heim", "heis", "hevc", "hevx",
+                    "mif1", "msf1", "avif", "avis"));
+
+    /**
+     * True when {@code head} starts an ISO-BMFF VIDEO container (a {@code ftyp} box
+     * at byte 4 whose major brand is not a still-image brand).
+     */
     public static boolean isVideoHead(byte[] head) {
-        return head != null && head.length >= 12 && "ftyp".equals(ascii(head, 4, 4));
+        if (head == null || head.length < 12 || !"ftyp".equals(ascii(head, 4, 4))) {
+            return false;
+        }
+        return !STILL_IMAGE_BRANDS.contains(ascii(head, 8, 4).trim().toLowerCase(java.util.Locale.ROOT));
     }
 
     /**
@@ -273,13 +365,41 @@ public final class TerminalImage {
         return "qt  ".equals(ascii(head, 8, 4)) ? "video/quicktime" : "video/mp4";
     }
 
-    /** Content-sniffed mime of {@code path} when it is a video container, else {@code null}. */
+    /**
+     * Content-sniffed mime of {@code path} when it is a video container, else
+     * {@code null}. The BYTES decide whether it is a clip at all; the name only
+     * refines the label ({@code .mov} → {@code video/quicktime}), so a mislabelled
+     * file cannot fool a caller.
+     */
     public static String probeVideoMime(String path) {
         try {
-            return videoMime(readHead(new File(path), 12));
+            String mime = videoMime(readHead(new File(path), 12));
+            if (mime == null) {
+                return null;
+            }
+            return path.toLowerCase(java.util.Locale.ROOT).endsWith(".mov") ? "video/quicktime" : mime;
         } catch (Throwable t) {
             return null;
         }
+    }
+
+    /**
+     * True when {@code path} is an existing readable file whose FIRST BYTES are a
+     * video container head — 12 bytes read, no decode and no index walk. This is the
+     * cheap gate a still-image surface uses to ask "is this thing a clip?", so it is
+     * total: a missing or unreadable path is simply {@code false}.
+     */
+    public static boolean isVideoFile(String path) {
+        return path != null && probeVideoMime(path) != null;
+    }
+
+    /**
+     * True when {@code path} is a clip a still-image surface should draw as a poster
+     * frame — by {@code mime} when the caller knows one, else by sniffing the file
+     * (a dropped path carries no mime).
+     */
+    public static boolean isVideoSource(String path, String mime) {
+        return isVideoMime(mime) || isVideoFile(path);
     }
 
     /** True for the mimes {@link #imageDimensions} resolves through the MP4 box walk. */
@@ -510,6 +630,22 @@ public final class TerminalImage {
         return new int[]{(int) fcols, (int) frows};
     }
 
+    /**
+     * Long-edge PIXEL ceiling of a {@code cols}×{@code rows} cell box — what to ask
+     * a decoder for when the result will be drawn into that box.
+     *
+     * <p>Decoding 1080p for an 80-column window produces about six times the pixels
+     * the cells can show: seconds of extra decode and tens of megabytes of extra
+     * escape bytes, all of it thrown away by the terminal's own downscale. Reads the
+     * LIVE cell metrics, so a HiDPI cell asks for a proportionally sharper picture.
+     * A non-positive {@code rows} bounds by width alone.
+     */
+    public static int boxPixels(int cols, int rows) {
+        long w = (cols > 0 ? (long) cols : 80L) * cellW;
+        long h = rows > 0 ? (long) rows * cellH : 0L;
+        return (int) Math.max(64L, Math.max(w, h));
+    }
+
     // =========================================================================
     // Escape encoding (pi encodeKitty / encodeITerm2 parity)
     // =========================================================================
@@ -721,6 +857,157 @@ public final class TerminalImage {
 
     private static String transmitHead(int id) {
         return "a=t,i=" + id + ",f=100,q=2";
+    }
+
+    // =========================================================================
+    // Kitty placement of an already-transmitted image
+    // =========================================================================
+
+    /**
+     * Kitty {@code a=p} placement sequence for an ALREADY-transmitted image
+     * {@code id} at the cursor: draw it into a {@code cols}×{@code rows} cell box,
+     * optionally cropped to the visible vertical slice ({@code cropTopRows} /
+     * {@code cropBottomRows} cell rows over an {@code imgW}×{@code imgH} px image)
+     * via the protocol's source rectangle — the SAME rectangle
+     * {@link #encodeKitty(String,int,int,int,int,int,int)} computes.
+     *
+     * <p>Reusing placement id {@code p=1} REPLACES the prior placement, so a scroll
+     * moves the picture atomically: no delete-all, no re-upload, no flash.
+     */
+    public static String placeKitty(int id, int cols, int rows,
+                                    int cropTopRows, int cropBottomRows,
+                                    int imgW, int imgH) {
+        int ct = Math.max(0, cropTopRows);
+        int cb = Math.max(0, cropBottomRows);
+        int visRows = Math.max(1, rows - ct - cb);
+        StringBuilder acc = new StringBuilder(64);
+        acc.append(ESC).append("_Ga=p,i=").append(id).append(",p=1,C=1,q=2");
+        if (cols > 0) {
+            acc.append(",c=").append(cols);
+        }
+        acc.append(",r=").append(visRows);
+        if (rows > 0 && imgH > 0 && (ct > 0 || cb > 0)) {
+            long y = Math.round((double) imgH * ct / rows);
+            long h = Math.round((double) imgH * visRows / rows);
+            if (h < 1) {
+                h = 1;
+            }
+            // Clamp the source rectangle inside the image: an out-of-bounds y+h makes
+            // Kitty reject the placement, blanking the image mid-scroll.
+            if (y + h > imgH) {
+                h = imgH - y;
+            }
+            acc.append(",x=0,y=").append(y)
+                    .append(",w=").append(Math.max(0, imgW))
+                    .append(",h=").append(h);
+        }
+        return acc.append(ESC).append('\\').toString();
+    }
+
+    /** {@link #placeKitty(int,int,int,int,int,int,int)} with no source crop. */
+    public static String placeKitty(int id, int cols, int rows) {
+        return placeKitty(id, cols, rows, 0, 0, 0, 0);
+    }
+
+    /**
+     * Kitty sequence removing image {@code id}'s placement while KEEPING its
+     * uploaded data, so an image scrolled off screen leaves no ghost yet needs no
+     * re-upload when it scrolls back into view.
+     */
+    public static String deleteKittyPlacement(int id) {
+        return ESC + "_Ga=d,d=i,i=" + id + ",q=2" + ESC + "\\";
+    }
+
+    /**
+     * Kitty sequence deleting image {@code id} AND freeing its uploaded data — for
+     * when a transmit cache evicts a long-off-screen image to bound terminal-side
+     * memory.
+     */
+    public static String freeKittyImage(int id) {
+        return ESC + "_Ga=d,d=I,i=" + id + ",q=2" + ESC + "\\";
+    }
+
+    // =========================================================================
+    // Mime ↔ extension, and paths delivered by a terminal DROP
+    // =========================================================================
+
+    /**
+     * Canonical file extension (with the dot) for a still or clip mime this class
+     * understands, or {@code null}. A clip must keep its OWN extension when cached:
+     * a {@code .png}-named MP4 is neither playable nor probeable.
+     */
+    public static String extensionForMime(String mime) {
+        if (mime == null) {
+            return null;
+        }
+        switch (mime) {
+            case "image/png":
+                return ".png";
+            case "image/jpeg":
+                return ".jpg";
+            case "image/gif":
+                return ".gif";
+            case "image/webp":
+                return ".webp";
+            case "image/bmp":
+                return ".bmp";
+            case "video/mp4":
+            case "video/mpeg4":
+                return ".mp4";
+            case "video/quicktime":
+                return ".mov";
+            case "video/x-m4v":
+                return ".m4v";
+            default:
+                return null;
+        }
+    }
+
+    /**
+     * The single file path a terminal DROP delivered as {@code text}, or
+     * {@code null}. A drag-and-drop arrives as ONE line that may be quoted,
+     * {@code file://}-prefixed, shell-escaped ({@code "\\ "} for a space) and
+     * {@code ~}-relative; this hands back the plain path with all of that undone.
+     * Only a whole-payload path counts — prose that merely mentions a file is not a
+     * drop.
+     */
+    public static String pastedFilePath(String text) {
+        if (text == null) {
+            return null;
+        }
+        String s = text.trim();
+        if (s.isEmpty() || s.indexOf('\n') >= 0 || s.indexOf('\r') >= 0) {
+            return null;
+        }
+        char q = s.charAt(0);
+        if (s.length() >= 2 && (q == '"' || q == '\'') && s.charAt(s.length() - 1) == q) {
+            s = s.substring(1, s.length() - 1);
+        }
+        if (s.regionMatches(true, 0, "file://", 0, 7)) {
+            s = s.substring(7);
+        }
+        s = s.replace("\\ ", " ").trim();
+        if (s.isEmpty() || s.indexOf('"') >= 0 || s.indexOf('\'') >= 0) {
+            return null;
+        }
+        if (s.charAt(0) == '~') {
+            s = System.getProperty("user.home", "~") + s.substring(1);
+        }
+        return s;
+    }
+
+    /**
+     * {@link #pastedFilePath(String)} restricted to CLIP names ({@code .mp4},
+     * {@code .m4v}, {@code .mov}). The engine's image scanner ignores clips, so a
+     * dropped movie is resolved through here.
+     */
+    public static String pastedVideoPath(String text) {
+        String p = pastedFilePath(text);
+        if (p == null) {
+            return null;
+        }
+        String lower = p.toLowerCase(java.util.Locale.ROOT);
+        return lower.endsWith(".mp4") || lower.endsWith(".m4v") || lower.endsWith(".mov") ? p : null;
     }
 
     // path -> {mtime, size, data}. Images are re-emitted on every scroll that
