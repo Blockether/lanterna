@@ -17,7 +17,6 @@ try (HtmlTerminal terminal = HtmlTerminal.builder()
         .build()) {
     TerminalScreen screen = new TerminalScreen(terminal);
     screen.startScreen();
-    System.out.println(terminal.getUrl());
 
     // The ordinary TerminalScreen or MultiWindowTextGUI application runs here.
 
@@ -26,33 +25,19 @@ try (HtmlTerminal terminal = HtmlTerminal.builder()
 }
 ```
 
-The live URL is bound to `127.0.0.1` and contains an unguessable token. Browser
-keyboard, paste, IME, pointer, wheel and viewport resize events arrive through
-Lanterna's ordinary input and resize APIs. Every frame comes from the resolved
-`VirtualTerminal` cell buffer, including wide characters, the cursor, ANSI,
-indexed and RGB colours, and every `SGR` modifier.
-
+Every frame comes from the resolved `VirtualTerminal` cell buffer, including wide
+characters, the cursor, ANSI, indexed and RGB colours, and every `SGR` modifier.
 `renderHtml()` and `writeHtml(Path)` export the current frame with inline CSS,
-JavaScript, cells and media. The resulting file needs no server or external
-asset. It is a snapshot: an arbitrary Java application can remain interactive
-only while its live `HtmlTerminal` process is running.
+cells and media. The resulting file needs no server or external asset.
 
-The live page is server-rendered: its first response already contains the resolved
-cell and media markup. Later paints arrive as HTML fragments on an `EventSource`
-stream. The small browser script only swaps those fragments, measures the viewport,
-and forwards input and resize forms; it does not receive a frame model or construct
-terminal cells. Unchanged media elements are retained across paints so active audio
-or video does not restart when unrelated cells change.
+## Host-owned HTTP transport
 
-## Application-owned HTTP transport
-
-Disable the loopback server when an application gateway should own the route,
-authentication and connection lifecycle:
+Lanterna deliberately contains no HTTP server, Jetty or servlet dependency and
+opens no socket. The application plugs the terminal into the HTTP stack it already
+owns:
 
 ```java
-try (HtmlTerminal terminal = HtmlTerminal.builder()
-        .embeddedServer(false)
-        .build()) {
+try (HtmlTerminal terminal = HtmlTerminal.builder().build()) {
     String firstResponse = terminal.renderLiveHtml("/terminal");
 
     long cursor = terminal.snapshot().version();
@@ -66,9 +51,18 @@ try (HtmlTerminal terminal = HtmlTerminal.builder()
 
 The host serves `renderLiveHtml` on the route prefix, carries each newer
 `renderFrame` result as an SSE `frame` event, and maps the browser's `/input` and
-`/resize` forms to the two methods above. It remains responsible for authorization,
-SSE keepalives and shutdown. This mode opens no socket and starts no HTTP executor
-inside Lanterna.
+`/resize` forms to the two methods above. The host's existing server owns routing,
+authorization, request limits, SSE keepalives and shutdown. No WebSocket or second
+Java HTTP implementation is needed.
+
+The live page is server-rendered: its first response already contains the resolved
+cell and media markup. Later paints arrive as HTML fragments on a native
+`EventSource`. The small browser script only swaps those fragments, measures the
+viewport, and forwards input and resize forms; it does not receive a frame model or
+construct terminal cells. Unchanged media elements are retained across paints so
+active audio or video does not restart when unrelated cells change. A media item
+whose rendered attributes or bytes change is replaced, so a new image, audio source
+or video source takes effect.
 
 ## One component or painted view
 
@@ -82,10 +76,11 @@ grid.addComponent(new Label("openai"));
 String html = HtmlTerminalView.render(
         grid, new TerminalSize(40, 8), "Provider view");
 
-try (HtmlTerminalView view = HtmlTerminalView.serve(
+try (HtmlTerminalView view = HtmlTerminalView.start(
         grid, new TerminalSize(40, 8), "Provider view")) {
-    System.out.println(view.getUrl());
-    // GUI2 buttons, text fields, focus and callbacks remain live.
+    HtmlTerminal terminal = view.getTerminal();
+    // Expose terminal through the application's own transport. GUI2 buttons,
+    // text fields, focus and callbacks remain live.
 }
 ```
 

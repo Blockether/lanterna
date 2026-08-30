@@ -15,13 +15,15 @@
 
 - Make the live HTML terminal server-rendered: the first document contains the
   resolved cells and media, and later paints arrive as HTML fragments over SSE.
-  Browser code now only swaps server markup and forwards input and resize events;
-  it no longer receives or reconstructs a JSON frame model.
-- Add transport-neutral `HtmlTerminal` mode for application-owned gateways:
-  `embeddedServer(false)`, `renderLiveHtml`, `awaitFrame`, `submitBrowserInput`
-  and `resizeFromBrowser` open no Lanterna socket or executor.
-- Preserve unchanged image, video and audio elements across paints, and
-  resynchronize browser geometry when an SSE stream reconnects to a fresh terminal.
+  Browser code only swaps server markup and forwards input and resize events; it
+  does not receive or reconstruct a JSON frame model.
+- Remove the embedded JDK HTTP server and its URL, token, executor and routing APIs.
+  `HtmlTerminal` is now always transport-neutral and opens no socket; applications
+  plug `renderLiveHtml`, `awaitFrame`, `submitBrowserInput` and
+  `resizeFromBrowser` into the HTTP server they already own.
+- Preserve unchanged image, video and audio elements across paints, replace media
+  when its rendered source changes, and resynchronize browser geometry when an SSE
+  stream reconnects to a fresh terminal.
 
 ### `3.1.5-vis.43`
 

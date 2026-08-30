@@ -66,7 +66,7 @@ public class HtmlTerminalViewTest {
     }
 
     @Test
-    public void servesOneInteractiveGui2ViewAndExportsItsCurrentState() throws Exception {
+    public void runsOneInteractiveGui2ViewAndExportsItsCurrentState() throws Exception {
         Label state = new Label("OFF");
         Button toggle = new Button("Toggle", () -> state.setText("ON"));
         Panel grid = new Panel(new GridLayout(2));
@@ -75,9 +75,8 @@ public class HtmlTerminalViewTest {
         grid.addComponent(new Label("Action"));
         grid.addComponent(toggle);
 
-        try (HtmlTerminalView view = HtmlTerminalView.serve(
+        try (HtmlTerminalView view = HtmlTerminalView.start(
                 grid, new TerminalSize(30, 8), "Interactive grid")) {
-            assertTrue(view.getUrl().startsWith("http://127.0.0.1:"));
             assertEquals(new TerminalSize(30, 8), view.getTerminal().getTerminalSize());
             assertTrue(view.renderHtml().contains("OFF"));
             assertTrue(rowText(view.getTerminal().snapshot(), 1).contains("<Toggle>"));
@@ -102,7 +101,7 @@ public class HtmlTerminalViewTest {
 
     @Test
     public void closingAViewStopsItsGuiThreadAndTerminal() throws Exception {
-        HtmlTerminalView view = HtmlTerminalView.serve(new Label("Close"));
+        HtmlTerminalView view = HtmlTerminalView.start(new Label("Close"));
         HtmlTerminal terminal = view.getTerminal();
         view.close();
         view.close();

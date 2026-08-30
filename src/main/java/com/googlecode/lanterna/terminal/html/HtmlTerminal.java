@@ -26,16 +26,7 @@ import com.googlecode.lanterna.input.MouseActionType;
 import com.googlecode.lanterna.terminal.Terminal;
 import com.googlecode.lanterna.terminal.virtual.DefaultVirtualTerminal;
 import com.googlecode.lanterna.terminal.virtual.VirtualTerminalListener;
-import com.sun.net.httpserver.HttpExchange;
-import com.sun.net.httpserver.HttpHandler;
-import com.sun.net.httpserver.HttpServer;
-
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.InetSocketAddress;
-import java.net.URI;
-import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -46,25 +37,20 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.UUID;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * A complete, interactive browser terminal backed by Lanterna's real virtual
- * terminal buffer.
+ * A transport-neutral interactive browser terminal backed by Lanterna's real
+ * virtual terminal buffer.
  *
  * <p>Use this class anywhere a {@link Terminal} is accepted, including
- * {@code TerminalScreen} and GUI2. The loopback page displays the exact cells
- * Lanterna resolved and sends resize, keyboard, paste, mouse and wheel events
- * back as ordinary Lanterna input. Closing the terminal stops the HTTP server.
+ * {@code TerminalScreen} and GUI2. The owning application serves the rendered
+ * document and SSE fragments through its own HTTP stack, then forwards browser
+ * resize, keyboard, paste, mouse and wheel events through this terminal.
  * {@link #renderHtml()} exports the current frame as one portable HTML file.</p>
  */
 public final class HtmlTerminal extends DefaultVirtualTerminal {
-    private static final int MAX_REQUEST_BYTES = 65_536;
     private static final Map<String, KeyType> SPECIAL_KEYS = specialKeys();
 
     private final String title;
@@ -75,17 +61,12 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
     private final int minRows;
     private final int maxRows;
     private final boolean browserResize;
-    private final String token;
-    private final HttpServer server;
-    private final ExecutorService executor;
     private final AtomicLong version;
     private final Object frameMonitor;
     private final AtomicBoolean closed;
-    private final AtomicBoolean serverStopped;
     private final Map<String, HtmlMedia> media;
-    private final URI uri;
 
-    private HtmlTerminal(Builder builder) throws IOException {
+    private HtmlTerminal(Builder builder) {
         super(builder.initialSize);
         title = builder.title;
         defaultForeground = builder.defaultForeground;
@@ -98,7 +79,6 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
         version = new AtomicLong();
         frameMonitor = new Object();
         closed = new AtomicBoolean();
-        serverStopped = new AtomicBoolean();
         media = Collections.synchronizedMap(new LinkedHashMap<>());
         addVirtualTerminalListener(new VirtualTerminalListener() {
             @Override
@@ -112,7 +92,6 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
 
             @Override
             public void onClose() {
-                stopServer();
             }
 
             @Override
@@ -120,44 +99,12 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
                 changed();
             }
         });
-        if (builder.embeddedServer) {
-            token = UUID.randomUUID().toString();
-            executor = Executors.newCachedThreadPool(new DaemonThreadFactory("lanterna-html"));
-            server = HttpServer.create(new InetSocketAddress("127.0.0.1", builder.port), 0);
-            server.setExecutor(executor);
-            server.createContext("/", new TerminalHandler());
-            server.start();
-            uri = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/?token=" + token);
-        }
-        else {
-            token = "";
-            executor = null;
-            server = null;
-            uri = null;
-        }
     }
 
     public static Builder builder() {
         return new Builder();
     }
 
-    public boolean hasEmbeddedServer() {
-        return server != null;
-    }
-
-    public URI getUri() {
-        requireEmbeddedServer();
-        return uri;
-    }
-
-    public String getUrl() {
-        return getUri().toString();
-    }
-
-    public int getPort() {
-        requireEmbeddedServer();
-        return server.getAddress().getPort();
-    }
 
     public String getTitle() {
         return title;
@@ -282,22 +229,10 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
         if (closed.compareAndSet(false, true)) {
             addInput(new KeyStroke(KeyType.EOF));
             super.close();
-            stopServer();
-        }
-    }
-
-    private void stopServer() {
-        if (serverStopped.compareAndSet(false, true)) {
-            if (server != null) server.stop(0);
-            if (executor != null) executor.shutdownNow();
             synchronized (frameMonitor) {
                 frameMonitor.notifyAll();
             }
         }
-    }
-
-    private void requireEmbeddedServer() {
-        if (server == null) throw new IllegalStateException("Embedded HTML server is disabled");
     }
 
     private void changed() {
@@ -307,103 +242,6 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
         }
     }
 
-    private final class TerminalHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            try {
-                route(exchange);
-            }
-            catch (RequestException exception) {
-                send(exchange, exception.status, "text/plain; charset=utf-8", exception.getMessage());
-            }
-            catch (RuntimeException exception) {
-                send(exchange, 500, "text/plain; charset=utf-8", "HTML terminal request failed");
-            }
-            finally {
-                exchange.close();
-            }
-        }
-    }
-
-    private void route(HttpExchange exchange) throws IOException {
-        Map<String, String> query = decodeForm(exchange.getRequestURI().getRawQuery());
-        if (!token.equals(query.get("token"))) {
-            throw new RequestException(403, "Forbidden");
-        }
-        String method = exchange.getRequestMethod();
-        String path = exchange.getRequestURI().getPath();
-        if ("GET".equals(method) && "/".equals(path)) {
-            String page = HtmlTerminalRenderer.renderLiveDocument(
-                    snapshot(),
-                    title,
-                    "",
-                    "?token=" + token,
-                    minColumns,
-                    maxColumns,
-                    minRows,
-                    maxRows,
-                    browserResize);
-            send(exchange, 200, "text/html; charset=utf-8", page);
-            return;
-        }
-        if ("GET".equals(method) && "/healthz".equals(path)) {
-            send(exchange, 200, "text/plain; charset=utf-8", "ok");
-            return;
-        }
-        if ("GET".equals(method) && "/events".equals(path)) {
-            long after = parseLong(exchange.getRequestHeaders().getFirst("Last-Event-ID"),
-                    parseLong(query.get("after"), -1));
-            streamEvents(exchange, after);
-            return;
-        }
-        if ("POST".equals(method) && "/resize".equals(path)) {
-            Map<String, String> form = decodeForm(readBody(exchange));
-            try {
-                resizeFromBrowser(
-                        (int) parseLong(form.get("cols"), minColumns),
-                        (int) parseLong(form.get("rows"), minRows));
-            }
-            catch (IllegalStateException exception) {
-                throw new RequestException(409, exception.getMessage());
-            }
-            send(exchange, 204, "text/plain; charset=utf-8", "");
-            return;
-        }
-        if ("POST".equals(method) && "/input".equals(path)) {
-            submitBrowserInput(decodeForm(readBody(exchange)));
-            send(exchange, 204, "text/plain; charset=utf-8", "");
-            return;
-        }
-        throw new RequestException(404, "Not found");
-    }
-
-    private void streamEvents(HttpExchange exchange, long afterVersion) throws IOException {
-        exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
-        exchange.getResponseHeaders().set("Cache-Control", "no-store, no-transform");
-        exchange.getResponseHeaders().set("X-Accel-Buffering", "no");
-        exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
-        exchange.sendResponseHeaders(200, 0);
-        try (OutputStream output = exchange.getResponseBody()) {
-            long after = afterVersion;
-            while (!closed.get()) {
-                HtmlTerminalRenderer.Frame frame = awaitFrame(after, 15_000);
-                String event;
-                if (frame.version() == after) event = ": keepalive\n\n";
-                else {
-                    StringBuilder text = new StringBuilder();
-                    text.append("id: ").append(frame.version()).append('\n');
-                    text.append("event: frame\n");
-                    for (String line : HtmlTerminalRenderer.renderFrame(frame).split("\\R", -1)) {
-                        text.append("data: ").append(line).append('\n');
-                    }
-                    event = text.append('\n').toString();
-                    after = frame.version();
-                }
-                output.write(event.getBytes(StandardCharsets.UTF_8));
-                output.flush();
-            }
-        }
-    }
 
     private void addBrowserInput(Map<String, String> form) {
         String kind = form.get("kind");
@@ -474,26 +312,6 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
         return Map.copyOf(keys);
     }
 
-    private static String readBody(HttpExchange exchange) throws IOException {
-        try (InputStream input = exchange.getRequestBody()) {
-            byte[] bytes = input.readNBytes(MAX_REQUEST_BYTES + 1);
-            if (bytes.length > MAX_REQUEST_BYTES) throw new RequestException(413, "Request is too large");
-            return new String(bytes, StandardCharsets.UTF_8);
-        }
-    }
-
-    private static Map<String, String> decodeForm(String encoded) {
-        Map<String, String> form = new LinkedHashMap<>();
-        if (encoded == null || encoded.isEmpty()) return form;
-        for (String part : encoded.split("&")) {
-            if (part.isEmpty()) continue;
-            String[] pair = part.split("=", 2);
-            String name = URLDecoder.decode(pair[0], StandardCharsets.UTF_8);
-            String value = URLDecoder.decode(pair.length == 2 ? pair[1] : "", StandardCharsets.UTF_8);
-            form.put(name, value);
-        }
-        return form;
-    }
 
     private static long parseLong(String value, long fallback) {
         try {
@@ -508,54 +326,9 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
         return Math.max(minimum, Math.min(maximum, value));
     }
 
-    private static void send(HttpExchange exchange, int status, String contentType, String body) throws IOException {
-        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().set("Content-Type", contentType);
-        exchange.getResponseHeaders().set("Cache-Control", "no-store");
-        exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
-        exchange.getResponseHeaders().set("Referrer-Policy", "no-referrer");
-        if (contentType.startsWith("text/html")) {
-            exchange.getResponseHeaders().set("Content-Security-Policy",
-                    "default-src 'none'; connect-src 'self'; img-src data:; media-src data:; "
-                            + "style-src 'unsafe-inline'; script-src 'unsafe-inline'; "
-                            + "base-uri 'none'; frame-ancestors 'none'");
-        }
-        if (status == 204) {
-            exchange.sendResponseHeaders(status, -1);
-            return;
-        }
-        exchange.sendResponseHeaders(status, bytes.length);
-        exchange.getResponseBody().write(bytes);
-    }
-
-    private static final class RequestException extends RuntimeException {
-        private final int status;
-
-        private RequestException(int status, String message) {
-            super(message);
-            this.status = status;
-        }
-    }
-
-    private static final class DaemonThreadFactory implements ThreadFactory {
-        private final String prefix;
-        private final AtomicLong counter = new AtomicLong();
-
-        private DaemonThreadFactory(String prefix) {
-            this.prefix = prefix;
-        }
-
-        @Override
-        public Thread newThread(Runnable runnable) {
-            Thread thread = new Thread(runnable, prefix + "-" + counter.incrementAndGet());
-            thread.setDaemon(true);
-            return thread;
-        }
-    }
 
     public static final class Builder {
         private TerminalSize initialSize = new TerminalSize(120, 40);
-        private int port;
         private String title = "Lanterna terminal";
         private TextColor defaultForeground = HtmlTerminalRenderer.DEFAULT_FOREGROUND;
         private TextColor defaultBackground = HtmlTerminalRenderer.DEFAULT_BACKGROUND;
@@ -564,8 +337,6 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
         private int minRows = 8;
         private int maxRows = 200;
         private boolean browserResize = true;
-        private boolean embeddedServer = true;
-
         private Builder() {
         }
 
@@ -574,11 +345,6 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
             return this;
         }
 
-        public Builder port(int port) {
-            if (port < 0 || port > 65_535) throw new IllegalArgumentException("port is out of range");
-            this.port = port;
-            return this;
-        }
 
         public Builder title(String title) {
             String value = Objects.requireNonNull(title, "title").trim();
@@ -617,13 +383,8 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
             return this;
         }
 
-        /** Disable the loopback server when another HTTP transport owns the terminal. */
-        public Builder embeddedServer(boolean enabled) {
-            embeddedServer = enabled;
-            return this;
-        }
 
-        public HtmlTerminal build() throws IOException {
+        public HtmlTerminal build() {
             int columns = clamp(initialSize.getColumns(), minColumns, maxColumns);
             int rows = clamp(initialSize.getRows(), minRows, maxRows);
             initialSize = new TerminalSize(columns, rows);

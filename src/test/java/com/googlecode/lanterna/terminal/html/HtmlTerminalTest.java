@@ -16,95 +16,68 @@ import com.googlecode.lanterna.input.MouseAction;
 import com.googlecode.lanterna.input.MouseActionType;
 import org.junit.Test;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.URI;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 import static org.junit.Assert.*;
 
 public class HtmlTerminalTest {
     @Test
-    public void servesTokenProtectedSsrPageAndEventStreamOnLoopback() throws Exception {
+    public void rendersSsrDocumentsAndFramesWithoutOwningHttpTransport() throws Exception {
         try (HtmlTerminal terminal = terminal(new TerminalSize(10, 4))) {
-            assertEquals("127.0.0.1", terminal.getUri().getHost());
-            assertTrue(terminal.getPort() > 0);
-            assertTrue(terminal.hasEmbeddedServer());
-
-            Response forbidden = request("GET", withoutToken(terminal, "/"), null);
-            assertEquals(403, forbidden.status());
-
             terminal.putCharacter('Z');
             terminal.flush();
-            Response page = request("GET", endpoint(terminal, "/"), null);
-            assertEquals(200, page.status());
-            assertTrue(page.contentType().startsWith("text/html"));
-            assertEquals("no-store", page.headers().get("cache-control"));
-            assertEquals("no-referrer", page.headers().get("referrer-policy"));
-            assertTrue(page.headers().get("content-security-policy").contains("media-src data:"));
-            assertTrue(page.body().contains("data-live=\"true\""));
-            assertTrue(page.body().contains("data-resizable=\"true\""));
-            assertTrue(page.body().contains(">Z</span>"));
-            assertFalse(page.body().contains("application/json"));
-            assertFalse(page.body().contains("__LANTERNA_"));
 
-            String event = firstEvent(terminal);
-            assertTrue(event.contains("event: frame"));
-            assertTrue(event.contains("data: <div class=\"frame\""));
-            assertTrue(event.contains(">Z</span>"));
+            String page = terminal.renderLiveHtml("/terminal");
+            assertTrue(page.contains("data-endpoint-prefix=\"/terminal\""));
+            assertTrue(page.contains("data-live=\"true\""));
+            assertTrue(page.contains("data-resizable=\"true\""));
+            assertTrue(page.contains(">Z</span>"));
+            assertFalse(page.contains("application/json"));
+            assertFalse(page.contains("__LANTERNA_"));
 
-            Response health = request("GET", endpoint(terminal, "/healthz"), null);
-            assertEquals(200, health.status());
-            assertEquals("ok", health.body());
+            String frame = terminal.renderFrameHtml();
+            assertTrue(frame.startsWith("<div class=\"frame\""));
+            assertTrue(frame.contains(">Z</span>"));
         }
     }
 
     @Test
     public void browserTextKeysMouseAndResizeBecomeOrdinaryTerminalEvents() throws Exception {
         try (HtmlTerminal terminal = terminal(new TerminalSize(10, 4))) {
-            assertEquals(204, post(terminal, "/input", form(
-                    "kind", "text", "text", "Zaż")).status());
+            terminal.submitBrowserInput(Map.of("kind", "text", "text", "Zaż"));
             assertEquals(Character.valueOf('Z'), terminal.readInput().getCharacter());
             assertEquals(Character.valueOf('a'), terminal.readInput().getCharacter());
             assertEquals(Character.valueOf('ż'), terminal.readInput().getCharacter());
 
-            assertEquals(204, post(terminal, "/input", form(
+            terminal.submitBrowserInput(Map.of(
                     "kind", "key",
                     "key", "ArrowDown",
                     "ctrl", "true",
                     "alt", "false",
-                    "shift", "true")).status());
+                    "shift", "true"));
             KeyStroke arrow = terminal.readInput();
             assertEquals(KeyType.ArrowDown, arrow.getKeyType());
             assertTrue(arrow.isCtrlDown());
             assertFalse(arrow.isAltDown());
             assertTrue(arrow.isShiftDown());
 
-            assertEquals(204, post(terminal, "/input", form(
-                    "kind", "key", "key", "Tab", "shift", "true")).status());
+            terminal.submitBrowserInput(Map.of("kind", "key", "key", "Tab", "shift", "true"));
             assertEquals(KeyType.ReverseTab, terminal.readInput().getKeyType());
 
-            assertEquals(204, post(terminal, "/input", form(
+            terminal.submitBrowserInput(Map.of(
                     "kind", "mouse",
                     "action", "CLICK_DOWN",
                     "button", "1",
                     "col", "7",
-                    "row", "2")).status());
+                    "row", "2"));
             MouseAction mouse = (MouseAction) terminal.readInput();
             assertEquals(MouseActionType.CLICK_DOWN, mouse.getActionType());
             assertEquals(1, mouse.getButton());
             assertEquals(new TerminalPosition(7, 2), mouse.getPosition());
 
-            assertEquals(204, post(terminal, "/resize", form("cols", "33", "rows", "12")).status());
-            assertEquals(new TerminalSize(33, 12), terminal.getTerminalSize());
-            assertEquals(204, post(terminal, "/resize", form("cols", "9999", "rows", "0")).status());
-            assertEquals(new TerminalSize(80, 2), terminal.getTerminalSize());
+            assertEquals(new TerminalSize(33, 12), terminal.resizeFromBrowser(33, 12));
+            assertEquals(new TerminalSize(80, 2), terminal.resizeFromBrowser(9999, 0));
         }
     }
 
@@ -123,7 +96,6 @@ public class HtmlTerminalTest {
             assertEquals(1, terminal.getMedia().size());
             assertTrue(terminal.renderHtml().contains("data:audio/wav;base64,AQIDBA=="));
             assertTrue(terminal.renderFrameHtml().contains("data:audio/wav;base64,AQIDBA=="));
-            assertTrue(firstEvent(terminal).contains("data:audio/wav;base64,AQIDBA=="));
             assertTrue(terminal.removeMedia("audio"));
             assertFalse(terminal.removeMedia("audio"));
             assertTrue(terminal.getMedia().isEmpty());
@@ -134,34 +106,29 @@ public class HtmlTerminalTest {
     }
 
     @Test
-    public void mediaLayerReplacementIsAtomicAndRejectsDuplicateIds() throws Exception {
+    public void mediaLayerReplacementIsAtomicAndChangedMediaChangesMarkup() throws Exception {
         try (HtmlTerminal terminal = terminal(new TerminalSize(10, 4))) {
-            HtmlMedia first = HtmlMedia.builder(HtmlMedia.Kind.IMAGE, "image/png", new byte[] {1})
-                    .id("first")
+            HtmlMedia first = HtmlMedia.builder(HtmlMedia.Kind.VIDEO, "video/mp4", new byte[] {1})
+                    .id("media")
                     .build();
-            HtmlMedia second = HtmlMedia.builder(HtmlMedia.Kind.AUDIO, "audio/wav", new byte[] {2})
-                    .id("second")
+            HtmlMedia changed = HtmlMedia.builder(HtmlMedia.Kind.VIDEO, "video/mp4", new byte[] {2})
+                    .id("media")
                     .build();
 
             long before = terminal.snapshot().version();
-            terminal.replaceMedia(List.of(first, second));
-            assertEquals(List.of(first, second), terminal.getMedia());
+            terminal.replaceMedia(List.of(first));
+            assertEquals(List.of(first), terminal.getMedia());
             assertEquals(before + 1, terminal.snapshot().version());
+            String firstMarkup = terminal.renderFrameHtml();
 
-            terminal.replaceMedia(List.of(first, second));
+            terminal.replaceMedia(List.of(first));
             assertEquals(before + 1, terminal.snapshot().version());
+            terminal.replaceMedia(List.of(changed));
+            assertEquals(before + 2, terminal.snapshot().version());
+            assertNotEquals(firstMarkup, terminal.renderFrameHtml());
+            assertTrue(terminal.renderFrameHtml().contains("data:video/mp4;base64,Ag=="));
             assertThrows(IllegalArgumentException.class, () -> terminal.replaceMedia(List.of(first, first)));
-            assertEquals(List.of(first, second), terminal.getMedia());
-        }
-    }
-
-    @Test
-    public void requestBodiesAreBoundedAndUnknownRoutesAreRejected() throws Exception {
-        try (HtmlTerminal terminal = terminal(new TerminalSize(10, 4))) {
-            String oversized = "x".repeat(65_537);
-            assertEquals(413, request("POST", endpoint(terminal, "/input"), oversized).status());
-            assertEquals(404, request("GET", endpoint(terminal, "/missing"), null).status());
-            assertEquals(404, request("DELETE", endpoint(terminal, "/"), null).status());
+            assertEquals(List.of(changed), terminal.getMedia());
         }
     }
 
@@ -175,8 +142,7 @@ public class HtmlTerminalTest {
                 .build()) {
             assertEquals(new TerminalSize(5, 3), terminal.getTerminalSize());
             assertEquals("Range", terminal.getTitle());
-            assertEquals(204, post(terminal, "/resize", form("cols", "100", "rows", "100")).status());
-            assertEquals(new TerminalSize(8, 6), terminal.getTerminalSize());
+            assertEquals(new TerminalSize(8, 6), terminal.resizeFromBrowser(100, 100));
         }
     }
 
@@ -189,30 +155,15 @@ public class HtmlTerminalTest {
                 .rowRange(2, 2)
                 .browserResize(false)
                 .build()) {
-            Response page = request("GET", endpoint(terminal, "/"), null);
-            assertTrue(page.body().contains("data-resizable=\"false\""));
-            assertEquals(409, post(terminal, "/resize", form("cols", "50", "rows", "20")).status());
+            assertTrue(terminal.renderLiveHtml("/terminal").contains("data-resizable=\"false\""));
             assertThrows(IllegalStateException.class, () -> terminal.resizeFromBrowser(50, 20));
             assertEquals(fixedSize, terminal.getTerminalSize());
         }
     }
 
     @Test
-    public void externalTransportUsesTheSameSsrInputResizeAndChangePrimitives() throws Exception {
-        try (HtmlTerminal terminal = HtmlTerminal.builder()
-                .initialSize(new TerminalSize(10, 4))
-                .columnRange(2, 80)
-                .rowRange(2, 40)
-                .embeddedServer(false)
-                .build()) {
-            assertFalse(terminal.hasEmbeddedServer());
-            assertThrows(IllegalStateException.class, terminal::getUri);
-            assertThrows(IllegalStateException.class, terminal::getPort);
-
-            String page = terminal.renderLiveHtml("/tui");
-            assertTrue(page.contains("data-endpoint-prefix=\"/tui\""));
-            assertTrue(page.contains("data-live=\"true\""));
-
+    public void hostTransportUsesSsrInputResizeAndChangePrimitives() throws Exception {
+        try (HtmlTerminal terminal = terminal(new TerminalSize(10, 4))) {
             long before = terminal.snapshot().version();
             terminal.putCharacter('N');
             terminal.flush();
@@ -223,98 +174,46 @@ public class HtmlTerminalTest {
             terminal.submitBrowserInput(Map.of("kind", "key", "key", "Enter"));
             assertEquals(KeyType.Enter, terminal.readInput().getKeyType());
             assertEquals(new TerminalSize(33, 12), terminal.resizeFromBrowser(33, 12));
-            assertEquals(new TerminalSize(33, 12), terminal.getTerminalSize());
         }
     }
 
     @Test
-    public void closeIsIdempotentAndQueuesEndOfFile() throws Exception {
+    public void containsNoHttpServerOrLegacyUrlApi() {
+        List<String> removedMethods = List.of(
+                "getUrl", "getUri", "getPort", "hasEmbeddedServer", "embeddedServer", "port");
+        for (java.lang.reflect.Method method : HtmlTerminal.class.getMethods()) {
+            assertFalse(method.getName(), removedMethods.contains(method.getName()));
+        }
+        for (java.lang.reflect.Method method : HtmlTerminal.Builder.class.getMethods()) {
+            assertFalse(method.getName(), removedMethods.contains(method.getName()));
+        }
+        for (java.lang.reflect.Method method : HtmlTerminalView.class.getMethods()) {
+            assertFalse(method.getName(), List.of("serve", "getUrl").contains(method.getName()));
+        }
+        for (java.lang.reflect.Field field : HtmlTerminal.class.getDeclaredFields()) {
+            assertFalse(field.getType().getName(), field.getType().getName().startsWith("com.sun.net.httpserver"));
+        }
+    }
+
+    @Test
+    public void closeIsIdempotentQueuesEndOfFileAndWakesFrameWaiters() throws Exception {
         HtmlTerminal terminal = terminal(new TerminalSize(10, 4));
+        long version = terminal.snapshot().version();
+        Thread waiter = Thread.ofVirtual().start(() -> terminal.awaitFrame(version, 30_000));
         terminal.close();
         terminal.close();
+        waiter.join(1_000);
+        assertFalse(waiter.isAlive());
         assertTrue(terminal.isClosed());
         assertEquals(KeyType.EOF, terminal.readInput().getKeyType());
     }
 
-    private static HtmlTerminal terminal(TerminalSize size) throws IOException {
+    private static HtmlTerminal terminal(TerminalSize size) {
         return HtmlTerminal.builder()
                 .initialSize(size)
                 .columnRange(2, 80)
                 .rowRange(2, 40)
                 .title("HTML test")
                 .build();
-    }
-
-    private static Response post(HtmlTerminal terminal, String path, String body) throws IOException {
-        return request("POST", endpoint(terminal, path), body);
-    }
-
-    private static URI endpoint(HtmlTerminal terminal, String path, String... extraQuery) {
-        String query = terminal.getUri().getRawQuery();
-        if (extraQuery.length > 0 && !extraQuery[0].isEmpty()) query += "&" + extraQuery[0];
-        return URI.create("http://127.0.0.1:" + terminal.getPort() + path + "?" + query);
-    }
-
-    private static URI withoutToken(HtmlTerminal terminal, String path) {
-        return URI.create("http://127.0.0.1:" + terminal.getPort() + path);
-    }
-
-    private static String firstEvent(HtmlTerminal terminal) throws IOException {
-        HttpURLConnection connection = (HttpURLConnection) endpoint(terminal, "/events", "after=-1")
-                .toURL()
-                .openConnection();
-        connection.setConnectTimeout(2_000);
-        connection.setReadTimeout(3_000);
-        assertEquals(200, connection.getResponseCode());
-        StringBuilder event = new StringBuilder();
-        try (InputStream input = connection.getInputStream()) {
-            while (event.length() < 1_000_000 && !event.toString().endsWith("\n\n")) {
-                int value = input.read();
-                if (value < 0) break;
-                event.append((char) value);
-            }
-        }
-        finally {
-            connection.disconnect();
-        }
-        return event.toString();
-    }
-
-    private static String form(String... values) {
-        StringBuilder result = new StringBuilder();
-        for (int index = 0; index < values.length; index += 2) {
-            if (index > 0) result.append('&');
-            result.append(URLEncoder.encode(values[index], StandardCharsets.UTF_8));
-            result.append('=');
-            result.append(URLEncoder.encode(values[index + 1], StandardCharsets.UTF_8));
-        }
-        return result.toString();
-    }
-
-    private static Response request(String method, URI uri, String body) throws IOException {
-        HttpURLConnection connection = (HttpURLConnection) uri.toURL().openConnection();
-        connection.setConnectTimeout(2_000);
-        connection.setReadTimeout(3_000);
-        connection.setRequestMethod(method);
-        if (body != null) {
-            connection.setDoOutput(true);
-            connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded;charset=UTF-8");
-            connection.getOutputStream().write(body.getBytes(StandardCharsets.UTF_8));
-        }
-        int status = connection.getResponseCode();
-        InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
-        String responseBody = stream == null ? "" : new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-        Map<String, String> headers = new LinkedHashMap<>();
-        connection.getHeaderFields().forEach((name, values) -> {
-            if (name != null && values != null && !values.isEmpty()) {
-                headers.put(name.toLowerCase(Locale.ROOT), values.get(0));
-            }
-        });
-        String contentType = connection.getContentType() == null ? "" : connection.getContentType();
-        connection.disconnect();
-        return new Response(status, contentType, responseBody, headers);
-    }
-
-    private record Response(int status, String contentType, String body, Map<String, String> headers) {
     }
 }

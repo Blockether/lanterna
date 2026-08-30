@@ -39,12 +39,14 @@ import java.util.function.Consumer;
 
 /**
  * Renders one GUI2 component or one direct {@link TextGraphics} painter as
- * portable HTML, and can serve a component as a live interactive browser view.
+ * portable HTML, and can run a component against a transport-neutral live
+ * browser terminal.
  *
  * <p>This is a convenience layer over {@link HtmlTerminal}; complete terminal
  * applications can use {@code HtmlTerminal} directly anywhere they currently
  * create a Lanterna terminal. A view uses the same GUI2 component, layout pass,
- * integer cell buffer and input events as the complete application.</p>
+ * integer cell buffer and input events as the complete application. The owning
+ * application exposes the terminal through its HTTP stack.</p>
  */
 public final class HtmlTerminalView implements AutoCloseable {
     private static final TerminalSize DEFAULT_SIZE = new TerminalSize(120, 40);
@@ -88,13 +90,13 @@ public final class HtmlTerminalView implements AutoCloseable {
         }
     }
 
-    /** Serve a component in a live browser terminal using a 120 by 40 cell viewport. */
-    public static HtmlTerminalView serve(Component component) throws IOException {
-        return serve(component, DEFAULT_SIZE, DEFAULT_TITLE);
+    /** Start a component against a 120 by 40 cell browser terminal. */
+    public static HtmlTerminalView start(Component component) throws IOException {
+        return start(component, DEFAULT_SIZE, DEFAULT_TITLE);
     }
 
-    /** Serve a component in a live browser terminal. */
-    public static HtmlTerminalView serve(Component component, TerminalSize size, String title) throws IOException {
+    /** Start a component against a configured browser terminal. */
+    public static HtmlTerminalView start(Component component, TerminalSize size, String title) throws IOException {
         TerminalSize viewSize = Objects.requireNonNull(size, "size");
         HtmlTerminal terminal = HtmlTerminal.builder()
                 .initialSize(viewSize)
@@ -103,14 +105,14 @@ public final class HtmlTerminalView implements AutoCloseable {
                 .browserResize(false)
                 .title(Objects.requireNonNull(title, "title"))
                 .build();
-        return serve(component, terminal);
+        return start(component, terminal);
     }
 
     /**
-     * Serve a component using a configured terminal. The returned view owns the
+     * Start a component using a configured terminal. The returned view owns the
      * terminal and closes it when the view is closed.
      */
-    public static HtmlTerminalView serve(Component component, HtmlTerminal terminal) throws IOException {
+    public static HtmlTerminalView start(Component component, HtmlTerminal terminal) throws IOException {
         return new HtmlTerminalView(terminal, component);
     }
 
@@ -173,9 +175,6 @@ public final class HtmlTerminalView implements AutoCloseable {
         return window;
     }
 
-    public String getUrl() {
-        return terminal.getUrl();
-    }
 
     public String renderHtml() {
         return terminal.renderHtml();

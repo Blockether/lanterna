@@ -170,7 +170,8 @@ public class HtmlTerminalRendererTest {
         assertTrue(html.contains("post('/resize'"));
         assertTrue(html.contains("template.innerHTML = event.data"));
         assertTrue(html.contains("resizeToViewport();"));
-        assertTrue(html.contains("current.outerHTML === replacement.outerHTML"));
+        assertTrue(html.contains(
+                "if (current && current.outerHTML === replacement.outerHTML) replacement.replaceWith(current);"));
         assertFalse(html.contains("/frame"));
     }
 
