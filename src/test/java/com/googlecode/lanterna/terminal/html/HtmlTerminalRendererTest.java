@@ -168,6 +168,18 @@ public class HtmlTerminalRendererTest {
     }
 
     @Test
+    public void browserGeometryUsesResolvedGridTracksForResizeAndPointerMath() {
+        DefaultVirtualTerminal terminal = new DefaultVirtualTerminal(new TerminalSize(24, 8));
+        String html = HtmlTerminalRenderer.renderDocument(
+                HtmlTerminalRenderer.snapshot(terminal, 0), "Resolved tracks");
+
+        assertTrue(html.contains(
+                "cellWidth = terminal.getBoundingClientRect().width / Math.max(1, cols);"));
+        assertTrue(html.contains("const columnWidth = box.width / Math.max(1, cols);"));
+        assertTrue(html.contains("const lineHeight = box.height / Math.max(1, rows);"));
+    }
+
+    @Test
     public void pathFactoriesPreferBrowserCompatibleMediaTypes() throws Exception {
         Path wav = Files.createTempFile("lanterna-html-", ".wav");
         try {

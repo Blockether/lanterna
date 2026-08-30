@@ -78,6 +78,11 @@ audio.media { align-self: center; height: min(54px, 100%); }
     rowHeight = parseFloat(getComputedStyle(probe).lineHeight) || 18;
     document.documentElement.style.setProperty('--cell-w', `${cellWidth}px`);
     document.documentElement.style.setProperty('--row-h', `${rowHeight}px`);
+    // CSS Grid resolves each fractional track to the browser's layout unit. Use
+    // that resolved width for viewport fitting and input hit-testing, otherwise
+    // the sub-pixel error accumulates once per terminal column.
+    cellWidth = terminal.getBoundingClientRect().width / Math.max(1, cols);
+    document.documentElement.style.setProperty('--cell-w', `${cellWidth}px`);
   }
 
   function requestResize() {
@@ -195,9 +200,11 @@ audio.media { align-self: center; height: min(54px, 100%); }
 
   function point(event) {
     const box = terminal.getBoundingClientRect();
+    const columnWidth = box.width / Math.max(1, cols);
+    const lineHeight = box.height / Math.max(1, rows);
     return {
-      col: Math.max(0, Math.min(cols - 1, Math.floor((event.clientX - box.left) / cellWidth))),
-      row: Math.max(0, Math.min(rows - 1, Math.floor((event.clientY - box.top) / rowHeight)))
+      col: Math.max(0, Math.min(cols - 1, Math.floor((event.clientX - box.left) / columnWidth))),
+      row: Math.max(0, Math.min(rows - 1, Math.floor((event.clientY - box.top) / lineHeight)))
     };
   }
 
