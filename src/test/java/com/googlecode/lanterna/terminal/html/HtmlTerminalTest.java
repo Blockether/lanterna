@@ -23,6 +23,7 @@ import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -125,6 +126,28 @@ public class HtmlTerminalTest {
             terminal.putMedia(audio);
             terminal.clearMedia();
             assertTrue(terminal.getMedia().isEmpty());
+        }
+    }
+
+    @Test
+    public void mediaLayerReplacementIsAtomicAndRejectsDuplicateIds() throws Exception {
+        try (HtmlTerminal terminal = terminal(new TerminalSize(10, 4))) {
+            HtmlMedia first = HtmlMedia.builder(HtmlMedia.Kind.IMAGE, "image/png", new byte[] {1})
+                    .id("first")
+                    .build();
+            HtmlMedia second = HtmlMedia.builder(HtmlMedia.Kind.AUDIO, "audio/wav", new byte[] {2})
+                    .id("second")
+                    .build();
+
+            long before = terminal.snapshot().version();
+            terminal.replaceMedia(List.of(first, second));
+            assertEquals(List.of(first, second), terminal.getMedia());
+            assertEquals(before + 1, terminal.snapshot().version());
+
+            terminal.replaceMedia(List.of(first, second));
+            assertEquals(before + 1, terminal.snapshot().version());
+            assertThrows(IllegalArgumentException.class, () -> terminal.replaceMedia(List.of(first, first)));
+            assertEquals(List.of(first, second), terminal.getMedia());
         }
     }
 

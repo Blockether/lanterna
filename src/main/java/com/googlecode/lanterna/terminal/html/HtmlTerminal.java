@@ -39,6 +39,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -193,6 +194,28 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
         synchronized (media) {
             return List.copyOf(media.values());
         }
+    }
+
+    /** Replace the complete media layer atomically, notifying live pages once. */
+    public void replaceMedia(Collection<HtmlMedia> values) {
+        Objects.requireNonNull(values, "values");
+        Map<String, HtmlMedia> replacement = new LinkedHashMap<>();
+        for (HtmlMedia value : values) {
+            HtmlMedia item = Objects.requireNonNull(value, "values contains null");
+            if (replacement.put(item.getId(), item) != null) {
+                throw new IllegalArgumentException("Duplicate media id: " + item.getId());
+            }
+        }
+
+        boolean changed;
+        synchronized (media) {
+            changed = !media.equals(replacement);
+            if (changed) {
+                media.clear();
+                media.putAll(replacement);
+            }
+        }
+        if (changed) changed();
     }
 
     @Override
