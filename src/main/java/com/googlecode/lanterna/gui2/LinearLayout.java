@@ -314,6 +314,9 @@ public class LinearLayout implements LayoutManager {
                     }
                     fittingMap.put(largeComponent, currentSize.withRelativeRows(-1));
                     totalRequiredVerticalSpace--;
+                    if (availableVerticalSpace >= totalRequiredVerticalSpace) {
+                        break;
+                    }
                 }
             }
         }
@@ -462,6 +465,9 @@ public class LinearLayout implements LayoutManager {
                     }
                     fittingMap.put(largeComponent, currentSize.withRelativeColumns(-1));
                     totalRequiredHorizontalSpace--;
+                    if (availableHorizontalSpace >= totalRequiredHorizontalSpace) {
+                        break;
+                    }
                 }
             }
         }

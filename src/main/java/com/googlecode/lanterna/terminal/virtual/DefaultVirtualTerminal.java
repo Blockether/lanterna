@@ -233,16 +233,17 @@ public class DefaultVirtualTerminal extends AbstractTerminal implements VirtualT
     }
 
     @Override
-    public synchronized KeyStroke pollInput() {
+    public KeyStroke pollInput() {
         return inputQueue.poll();
     }
 
     @Override
-    public synchronized KeyStroke readInput() {
+    public KeyStroke readInput() {
         try {
             return inputQueue.take();
         }
         catch(InterruptedException e) {
+            Thread.currentThread().interrupt();
             throw new RuntimeException("Unexpected interrupt", e);
         }
     }

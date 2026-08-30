@@ -17,6 +17,7 @@
  * Copyright (C) 2010-2024 Martin Berglund
  */
 module com.googlecode.lanterna {
+    requires jdk.httpserver;
     exports com.googlecode.lanterna;
     exports com.googlecode.lanterna.bundle;
     exports com.googlecode.lanterna.graphics;
@@ -28,6 +29,7 @@ module com.googlecode.lanterna {
     exports com.googlecode.lanterna.screen;
     exports com.googlecode.lanterna.terminal;
     exports com.googlecode.lanterna.terminal.ansi;
+    exports com.googlecode.lanterna.terminal.html;
     exports com.googlecode.lanterna.terminal.image;
     exports com.googlecode.lanterna.terminal.virtual;
 

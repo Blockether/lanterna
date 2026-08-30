@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>__LANTERNA_TITLE__</title>
+<style>
+:root { color-scheme: dark light; --cell-w: 8.44px; --row-h: 18px; --ink: #e8e8e8; --paper: #111111; }
+* { box-sizing: border-box; }
+html, body { width: 100%; height: 100%; margin: 0; background: var(--paper); color: var(--ink); }
+body { overflow: hidden; }
+#viewport { position: fixed; inset: 0; overflow: auto; padding: var(--row-h) var(--cell-w); background: var(--paper); }
+#terminal, #probe { font: 14px/18px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-variant-ligatures: none; }
+#terminal { position: relative; display: grid; width: max-content; height: max-content; outline: none; user-select: none; cursor: default; }
+#cells, #media-layer { display: contents; }
+#terminal.focused { outline: 1px solid var(--ink); outline-offset: 2px; }
+#terminal.inspect { background-image: linear-gradient(to right, color-mix(in srgb, var(--ink) 12%, transparent) 1px, transparent 1px), linear-gradient(to bottom, color-mix(in srgb, var(--ink) 12%, transparent) 1px, transparent 1px); background-size: var(--cell-w) var(--row-h); }
+#input { position: fixed; left: 0; top: 0; width: 1px; height: 1px; padding: 0; border: 0; opacity: 0; resize: none; pointer-events: none; caret-color: transparent; }
+#probe { position: fixed; left: -10000px; top: -10000px; white-space: pre; visibility: hidden; }
+.cell { min-width: 0; height: var(--row-h); overflow: hidden; white-space: pre; line-height: var(--row-h); }
+.bold { font-weight: 700; }
+.italic { font-style: italic; }
+.underline { text-decoration-line: underline; text-underline-offset: 2px; }
+.strike { text-decoration-line: line-through; }
+.underline.strike { text-decoration-line: underline line-through; }
+.blink { animation: lanterna-blink 1s steps(1, end) infinite; }
+.bordered { outline: 1px solid currentColor; outline-offset: -1px; }
+.fraktur { font-family: UnifrakturCook, UnifrakturMaguntia, fantasy; }
+.circled { border: 1px solid currentColor; border-radius: 999px; text-align: center; }
+@keyframes lanterna-blink { 50% { color: transparent; } }
+@media (prefers-reduced-motion: reduce) { .blink { animation-duration: 2s; } }
+.cursor { z-index: 3; width: var(--cell-w); height: var(--row-h); pointer-events: none; box-shadow: inset 0 -2px currentColor; }
+.cursor[hidden] { display: none; }
+.media { z-index: 2; display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: contain; overflow: hidden; background: transparent; color: var(--ink); }
+audio.media { align-self: center; height: min(54px, 100%); }
+</style>
+</head>
+<body>
+<div id="viewport"><div id="terminal" role="application" aria-label="Terminal" tabindex="-1"><div id="cells"></div><div id="media-layer"></div><span id="cursor" class="cursor" aria-hidden="true" hidden></span></div></div>
+<textarea id="input" aria-label="Terminal keyboard input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+<span id="probe" aria-hidden="true">00000000000000000000000000000000000000000000000000</span>
+<script id="bootstrap" type="application/json">__LANTERNA_BOOTSTRAP__</script>
+<script>
+(() => {
+  'use strict';
+  const boot = JSON.parse(document.getElementById('bootstrap').textContent);
+  const terminal = document.getElementById('terminal');
+  const cells = document.getElementById('cells');
+  const mediaLayer = document.getElementById('media-layer');
+  const cursor = document.getElementById('cursor');
+  const input = document.getElementById('input');
+  const viewport = document.getElementById('viewport');
+  const probe = document.getElementById('probe');
+  const mediaNodes = new Map();
+  let composing = false;
+  let inputTail = Promise.resolve();
+  let version = -1;
+  let cols = 80;
+  let rows = 24;
+  let cellWidth = 8.44;
+  let rowHeight = 18;
+  let resizeTimer = 0;
+  let moveFrame = 0;
+  let pendingMove = null;
+
+  const endpoint = (path, extra = '') => `${path}?token=${encodeURIComponent(boot.token)}${extra}`;
+  const form = body => ({method: 'POST', headers: {'content-type': 'application/x-www-form-urlencoded;charset=UTF-8'}, body: new URLSearchParams(body)});
+  const post = (path, body) => fetch(endpoint(path), form(body));
+
+  function sendInput(body) {
+    if (!boot.live) return;
+    inputTail = inputTail.then(() => post('/input', body)).catch(() => {});
+  }
+
+  function measure() {
+    const box = probe.getBoundingClientRect();
+    cellWidth = box.width / 50;
+    rowHeight = parseFloat(getComputedStyle(probe).lineHeight) || 18;
+    document.documentElement.style.setProperty('--cell-w', `${cellWidth}px`);
+    document.documentElement.style.setProperty('--row-h', `${rowHeight}px`);
+  }
+
+  function requestResize() {
+    if (!boot.live) return;
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      const nextCols = Math.max(boot.min_cols, Math.min(boot.max_cols, Math.floor((viewport.clientWidth - (2 * cellWidth)) / cellWidth)));
+      const nextRows = Math.max(boot.min_rows, Math.min(boot.max_rows, Math.floor((viewport.clientHeight - (2 * rowHeight)) / rowHeight)));
+      if (nextCols !== cols || nextRows !== rows) {
+        cols = nextCols;
+        rows = nextRows;
+        post('/resize', {cols, rows}).catch(() => {});
+      }
+    }, 40);
+  }
+
+  function classNames(run) {
+    const names = ['cell'];
+    for (const name of ['bold', 'italic', 'underline', 'strike', 'blink', 'bordered', 'fraktur', 'circled']) {
+      if (run[name]) names.push(name);
+    }
+    return names.join(' ');
+  }
+
+  function createMedia(media) {
+    const node = document.createElement(media.kind);
+    node.className = 'media';
+    node.dataset.mediaId = media.id;
+    for (const name of ['pointerdown', 'pointerup', 'pointermove', 'wheel', 'click']) {
+      node.addEventListener(name, event => event.stopPropagation());
+    }
+    mediaNodes.set(media.id, node);
+    mediaLayer.appendChild(node);
+    return node;
+  }
+
+  function updateMedia(items) {
+    const active = new Set();
+    for (const media of items) {
+      active.add(media.id);
+      let node = mediaNodes.get(media.id);
+      if (node && node.localName !== media.kind) {
+        node.remove();
+        mediaNodes.delete(media.id);
+        node = null;
+      }
+      if (!node) node = createMedia(media);
+      node.style.gridColumn = `${media.x + 1} / span ${media.width}`;
+      node.style.gridRow = `${media.y + 1} / span ${media.height}`;
+      if (node.lanternaSource !== media.src) {
+        node.src = media.src;
+        node.lanternaSource = media.src;
+      }
+      if (media.kind === 'img') node.alt = media.description;
+      else {
+        node.setAttribute('aria-label', media.description);
+        node.controls = media.controls;
+        node.autoplay = media.autoplay;
+        node.loop = media.loop;
+        node.muted = media.muted;
+        node.preload = 'metadata';
+      }
+    }
+    for (const [id, node] of mediaNodes) {
+      if (!active.has(id)) {
+        node.remove();
+        mediaNodes.delete(id);
+      }
+    }
+  }
+
+  function render(frame) {
+    if (!frame || frame.version === version) return;
+    version = frame.version;
+    cols = frame.cols;
+    rows = frame.rows;
+    document.documentElement.style.setProperty('--ink', frame.default_fg);
+    document.documentElement.style.setProperty('--paper', frame.default_bg);
+    terminal.style.gridTemplateColumns = `repeat(${cols}, var(--cell-w))`;
+    terminal.style.gridTemplateRows = `repeat(${rows}, var(--row-h))`;
+    const fragment = document.createDocumentFragment();
+    for (const run of frame.runs) {
+      const node = document.createElement('span');
+      node.className = classNames(run);
+      node.style.gridColumn = `${run.x + 1} / span ${run.width}`;
+      node.style.gridRow = `${run.y + 1}`;
+      node.style.color = run.fg;
+      node.style.backgroundColor = run.bg;
+      node.textContent = run.text;
+      fragment.appendChild(node);
+    }
+    cells.replaceChildren(fragment);
+    updateMedia(frame.media);
+    cursor.hidden = !(frame.cursor_visible && frame.cursor);
+    if (!cursor.hidden) {
+      cursor.style.gridColumn = `${frame.cursor.col + 1}`;
+      cursor.style.gridRow = `${frame.cursor.row + 1}`;
+      cursor.style.color = frame.default_fg;
+    }
+    document.title = boot.title;
+  }
+
+  async function poll() {
+    if (!boot.live) return;
+    try {
+      const response = await fetch(endpoint('/frame', `&after=${version}`), {cache: 'no-store'});
+      if (!response.ok) throw new Error(`frame ${response.status}`);
+      render(await response.json());
+    } catch (_) {
+      document.title = `${boot.title} — disconnected`;
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    poll();
+  }
+
+  function point(event) {
+    const box = terminal.getBoundingClientRect();
+    return {
+      col: Math.max(0, Math.min(cols - 1, Math.floor((event.clientX - box.left) / cellWidth))),
+      row: Math.max(0, Math.min(rows - 1, Math.floor((event.clientY - box.top) / rowHeight)))
+    };
+  }
+
+  function mouse(kind, event, button) {
+    const p = point(event);
+    sendInput({kind: 'mouse', action: kind, button, col: p.col, row: p.row});
+  }
+
+  input.addEventListener('keydown', event => {
+    if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'g') {
+      event.preventDefault();
+      terminal.classList.toggle('inspect');
+      return;
+    }
+    const pasteShortcut = !event.altKey && (((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'v') || (!event.ctrlKey && !event.metaKey && event.shiftKey && event.key === 'Insert'));
+    if (!boot.live || event.metaKey || event.isComposing || event.key === 'Dead' || event.key === 'Process' || pasteShortcut) return;
+    event.preventDefault();
+    const printable = Array.from(event.key).length === 1;
+    const textModifier = printable && (event.getModifierState('AltGraph') || event.key.codePointAt(0) > 127);
+    const ctrl = event.ctrlKey && !textModifier;
+    const alt = event.altKey && !textModifier;
+    if (printable && !ctrl && !alt) sendInput({kind: 'text', text: event.key});
+    else sendInput({kind: 'key', key: event.key, code: event.code, ctrl, alt, shift: event.shiftKey});
+  });
+  input.addEventListener('compositionstart', () => { composing = true; });
+  input.addEventListener('compositionend', event => {
+    composing = false;
+    input.value = '';
+    if (event.data) sendInput({kind: 'text', text: event.data});
+  });
+  input.addEventListener('input', () => {
+    if (composing || !input.value) return;
+    const text = input.value;
+    input.value = '';
+    sendInput({kind: 'text', text});
+  });
+  input.addEventListener('paste', event => {
+    if (!boot.live) return;
+    event.preventDefault();
+    sendInput({kind: 'text', text: event.clipboardData.getData('text')});
+  });
+  input.addEventListener('focus', () => terminal.classList.add('focused'));
+  input.addEventListener('blur', () => terminal.classList.remove('focused'));
+  terminal.addEventListener('pointerdown', event => {
+    if (!boot.live) return;
+    event.preventDefault();
+    input.focus({preventScroll: true});
+    terminal.setPointerCapture(event.pointerId);
+    mouse('CLICK_DOWN', event, event.button + 1);
+  });
+  terminal.addEventListener('pointerup', event => {
+    if (!boot.live) return;
+    event.preventDefault();
+    mouse('CLICK_RELEASE', event, 0);
+  });
+  terminal.addEventListener('pointermove', event => {
+    if (!boot.live) return;
+    pendingMove = event;
+    if (moveFrame) return;
+    moveFrame = requestAnimationFrame(() => {
+      const current = pendingMove;
+      pendingMove = null;
+      moveFrame = 0;
+      mouse(current.buttons ? 'DRAG' : 'MOVE', current, current.buttons ? 1 : 0);
+    });
+  });
+  terminal.addEventListener('wheel', event => {
+    if (!boot.live) return;
+    event.preventDefault();
+    mouse(event.deltaY < 0 ? 'SCROLL_UP' : 'SCROLL_DOWN', event, event.deltaY < 0 ? 4 : 5);
+  }, {passive: false});
+  terminal.addEventListener('contextmenu', event => event.preventDefault());
+
+  render(boot.frame);
+  new ResizeObserver(requestResize).observe(viewport);
+  Promise.resolve(document.fonts && document.fonts.ready).then(() => {
+    measure();
+    requestResize();
+    input.focus({preventScroll: true});
+    poll();
+  });
+})();
+</script>
+</body>
+</html>

@@ -12,6 +12,7 @@ over the years, since lanterna was first published.
 2. [Direct terminal access](using-terminal.md)
 3. [Buffered screen API](using-screen.md)
 4. [Text GUI](using-gui.md)
+5. [HTML terminal backend](using-html-terminal.md)
 
 ## Tutorials
 1. [Tutorial 1](tutorial/Tutorial01.md) - Basic usage

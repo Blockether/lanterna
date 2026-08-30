@@ -26,6 +26,10 @@ import org.junit.Test;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.TreeSet;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.*;
@@ -548,6 +552,24 @@ public class DefaultVirtualTerminalTest {
         }
     }
 
+    @Test
+    public void blockingInputDoesNotLockTheTerminalBuffer() throws Exception {
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<KeyStroke> input = executor.submit(virtualTerminal::readInput);
+            Thread.sleep(25);
+
+            Future<TerminalSize> size = executor.submit(virtualTerminal::getTerminalSize);
+            assertEquals(new TerminalSize(80, 24), size.get(1, TimeUnit.SECONDS));
+
+            KeyStroke keyStroke = new KeyStroke('x', false, false);
+            virtualTerminal.addInput(keyStroke);
+            assertEquals(keyStroke, input.get(1, TimeUnit.SECONDS));
+        }
+        finally {
+            executor.shutdownNow();
+        }
+    }
     private TextCharacter fromChar(char c) {
         return new TextCharacter(c);
     }

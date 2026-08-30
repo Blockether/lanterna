@@ -7,10 +7,27 @@
 ## Blockether fork
 
 > `com.blockether:lanterna` — a **superset** of `mabe02/lanterna 3.1.5`.
-> This started life as a minimal two-cherry-pick emoji fix; it is now a
-> materially larger fork carrying its own display-width engine **and** an
-> inline-image subsystem. Drop-in for `com.googlecode.lanterna:lanterna:3.1.5`
-> (same packages/classes) plus one added package.
+> This fork now carries its own display-width engine, inline terminal graphics
+> and a complete HTML terminal backend. It remains a drop-in replacement for
+> `com.googlecode.lanterna:lanterna:3.1.5` and adds focused public packages.
+
+### `3.1.5-vis.43`
+
+- Add `HtmlTerminal`, a complete loopback browser terminal that can replace an
+  ordinary terminal beneath `TerminalScreen` or GUI2. It projects the resolved
+  integer cell buffer into CSS Grid and returns keyboard, paste, IME, pointer,
+  wheel and resize events through Lanterna's existing input APIs.
+- Add portable `renderHtml()` / `writeHtml(Path)` snapshots and
+  `HtmlTerminalView` for rendering or serving one GUI2 component or direct
+  `TextGraphics` painter. ANSI, indexed and RGB colours, wide glyphs, the cursor
+  and every `SGR` modifier retain their terminal semantics.
+- Add `HtmlMedia` overlays for self-contained image, video and audio data, with
+  controls and cell geometry preserved in live and exported documents.
+- Fix `DefaultVirtualTerminal.readInput()` so a blocking reader no longer holds
+  the terminal-buffer monitor, and fix `LinearLayout` shrink allocation so tied
+  flexible components do not shrink past the exact available size.
+- Add browser-backend, media, security, input, lifecycle, GridLayout and
+  LinearLayout regression suites.
 
 ### `3.1.5-vis.39`
 
