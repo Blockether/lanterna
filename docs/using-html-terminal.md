@@ -60,6 +60,11 @@ There is also a `render(TerminalSize, String, Consumer<TextGraphics>)` overload
 for direct cell painters. Grid and linear layouts are calculated by GUI2 before
 the browser sees them; CSS Grid only places already-resolved cell rectangles.
 
+`TextGraphicsComponent` turns an existing cell painter into a real GUI2 component,
+so it can be measured and positioned by `GridLayout` or `LinearLayout` without a
+rewrite. `TextGUIGraphics.from(TextGraphics)` adapts an ordinary paint surface when
+drawing such a paint-only component tree outside a `TextGUI`.
+
 ## Images, video and audio
 
 Media is explicit terminal content so it can survive both live frames and static

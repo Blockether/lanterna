@@ -28,6 +28,9 @@
   flexible components do not shrink past the exact available size.
 - Add browser-backend, media, security, input, lifecycle, GridLayout and
   LinearLayout regression suites.
+- Add `TextGraphicsComponent` and `TextGUIGraphics.from(...)` so existing cell
+  painters can become real GUI2 grid/linear-layout components without changing
+  their rendering code.
 
 ### `3.1.5-vis.39`
 

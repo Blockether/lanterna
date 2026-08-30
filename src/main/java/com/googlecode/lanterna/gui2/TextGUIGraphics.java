@@ -24,6 +24,7 @@ import com.googlecode.lanterna.screen.TabBehaviour;
 
 import java.util.Collection;
 import java.util.EnumSet;
+import java.util.Objects;
 
 /**
  * TextGraphics implementation used by TextGUI when doing any drawing operation.
@@ -35,6 +36,22 @@ public interface TextGUIGraphics extends ThemedTextGraphics, TextGraphics {
      * @return {@code TextGUI} this {@code TextGUIGraphics} belongs to
      */
     TextGUI getTextGUI();
+
+    /**
+     * Adapts ordinary cell graphics for drawing a paint-only GUI2 component tree.
+     * The returned graphics has no owning {@link TextGUI}, so interactive controls
+     * still belong in a real {@code TextGUI}; layout and rendering work normally.
+     *
+     * @param backend graphics receiving the resolved component painting
+     * @return GUI2 graphics over the same cell surface
+     */
+    static TextGUIGraphics from(TextGraphics backend) {
+        Objects.requireNonNull(backend, "backend");
+        if (backend instanceof TextGUIGraphics) {
+            return (TextGUIGraphics) backend;
+        }
+        return new DefaultTextGUIGraphics(null, backend);
+    }
 
     @Override
     TextGUIGraphics newTextGraphics(TerminalPosition topLeftCorner, TerminalSize size) throws IllegalArgumentException;
