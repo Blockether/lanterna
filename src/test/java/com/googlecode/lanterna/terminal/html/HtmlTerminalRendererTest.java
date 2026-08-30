@@ -146,6 +146,7 @@ public class HtmlTerminalRendererTest {
         assertTrue(html.contains("data:image/png;base64,"));
         assertTrue(html.contains("data:video/mp4;base64,"));
         assertTrue(html.contains("data:audio/mpeg;base64,"));
+        assertTrue(html.contains("\"resizable\":false"));
         assertFalse(html.contains("__LANTERNA_"));
         assertFalse(html.contains("</script>&audio"));
     }

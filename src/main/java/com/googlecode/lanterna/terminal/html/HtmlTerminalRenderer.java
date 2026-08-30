@@ -286,7 +286,7 @@ public final class HtmlTerminalRenderer {
 
     /** Build a static, portable HTML document containing this exact frame. */
     public static String renderDocument(Frame frame, String title) {
-        return renderTemplate(frame, title, false, "", 1, 1000, 1, 1000);
+        return renderTemplate(frame, title, false, "", 1, 1000, 1, 1000, false);
     }
 
     public static String renderDocument(VirtualTerminal terminal, String title) {
@@ -300,8 +300,9 @@ public final class HtmlTerminalRenderer {
             int minColumns,
             int maxColumns,
             int minRows,
-            int maxRows) {
-        return renderTemplate(frame, title, true, token, minColumns, maxColumns, minRows, maxRows);
+            int maxRows,
+            boolean browserResize) {
+        return renderTemplate(frame, title, true, token, minColumns, maxColumns, minRows, maxRows, browserResize);
     }
 
     private static String renderTemplate(
@@ -312,7 +313,8 @@ public final class HtmlTerminalRenderer {
             int minColumns,
             int maxColumns,
             int minRows,
-            int maxRows) {
+            int maxRows,
+            boolean browserResize) {
         String safeTitle = title == null || title.isBlank() ? "Lanterna terminal" : title;
         StringBuilder bootstrap = new StringBuilder(toJson(frame).length() + 256);
         bootstrap.append('{');
@@ -323,6 +325,7 @@ public final class HtmlTerminalRenderer {
         field(bootstrap, "max_cols", maxColumns).append(',');
         field(bootstrap, "min_rows", minRows).append(',');
         field(bootstrap, "max_rows", maxRows).append(',');
+        field(bootstrap, "resizable", browserResize).append(',');
         quote(bootstrap, "frame").append(':').append(toJson(frame));
         bootstrap.append('}');
         return fillTemplate(escapeHtml(safeTitle), bootstrap.toString());

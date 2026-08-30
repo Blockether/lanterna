@@ -95,8 +95,12 @@ public final class HtmlTerminalView implements AutoCloseable {
 
     /** Serve a component in a live browser terminal. */
     public static HtmlTerminalView serve(Component component, TerminalSize size, String title) throws IOException {
+        TerminalSize viewSize = Objects.requireNonNull(size, "size");
         HtmlTerminal terminal = HtmlTerminal.builder()
-                .initialSize(Objects.requireNonNull(size, "size"))
+                .initialSize(viewSize)
+                .columnRange(viewSize.getColumns(), viewSize.getColumns())
+                .rowRange(viewSize.getRows(), viewSize.getRows())
+                .browserResize(false)
                 .title(Objects.requireNonNull(title, "title"))
                 .build();
         return serve(component, terminal);

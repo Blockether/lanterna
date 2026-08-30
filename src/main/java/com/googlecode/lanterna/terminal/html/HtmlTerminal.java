@@ -73,6 +73,7 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
     private final int maxColumns;
     private final int minRows;
     private final int maxRows;
+    private final boolean browserResize;
     private final String token;
     private final HttpServer server;
     private final ExecutorService executor;
@@ -92,6 +93,7 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
         maxColumns = builder.maxColumns;
         minRows = builder.minRows;
         maxRows = builder.maxRows;
+        browserResize = builder.browserResize;
         token = UUID.randomUUID().toString();
         version = new AtomicLong();
         frameMonitor = new Object();
@@ -287,7 +289,7 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
         String path = exchange.getRequestURI().getPath();
         if ("GET".equals(method) && "/".equals(path)) {
             String page = HtmlTerminalRenderer.renderLiveDocument(
-                    snapshot(), title, token, minColumns, maxColumns, minRows, maxRows);
+                    snapshot(), title, token, minColumns, maxColumns, minRows, maxRows, browserResize);
             send(exchange, 200, "text/html; charset=utf-8", page);
             return;
         }
@@ -302,6 +304,7 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
             return;
         }
         if ("POST".equals(method) && "/resize".equals(path)) {
+            if (!browserResize) throw new RequestException(409, "Browser resize is disabled");
             Map<String, String> form = decodeForm(readBody(exchange));
             int columns = clamp((int) parseLong(form.get("cols"), minColumns), minColumns, maxColumns);
             int rows = clamp((int) parseLong(form.get("rows"), minRows), minRows, maxRows);
@@ -476,6 +479,7 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
         private int maxColumns = 400;
         private int minRows = 8;
         private int maxRows = 200;
+        private boolean browserResize = true;
 
         private Builder() {
         }
@@ -519,6 +523,12 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
             requireRange(minimum, maximum, "row");
             minRows = minimum;
             maxRows = maximum;
+            return this;
+        }
+
+        /** Enable or disable viewport-driven terminal resizing. */
+        public Builder browserResize(boolean enabled) {
+            browserResize = enabled;
             return this;
         }
 

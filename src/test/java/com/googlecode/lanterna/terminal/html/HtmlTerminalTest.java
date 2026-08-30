@@ -46,6 +46,7 @@ public class HtmlTerminalTest {
             assertEquals("no-referrer", page.headers().get("referrer-policy"));
             assertTrue(page.headers().get("content-security-policy").contains("media-src data:"));
             assertTrue(page.body().contains("\"live\":true"));
+            assertTrue(page.body().contains("\"resizable\":true"));
             assertFalse(page.body().contains("__LANTERNA_"));
 
             terminal.putCharacter('Z');
@@ -173,6 +174,22 @@ public class HtmlTerminalTest {
             assertEquals("Range", terminal.getTitle());
             assertEquals(204, post(terminal, "/resize", form("cols", "100", "rows", "100")).status());
             assertEquals(new TerminalSize(8, 6), terminal.getTerminalSize());
+        }
+    }
+
+    @Test
+    public void fixedBrowserViewRejectsResizeRequests() throws Exception {
+        TerminalSize fixedSize = new TerminalSize(7, 2);
+        try (HtmlTerminal terminal = HtmlTerminal.builder()
+                .initialSize(fixedSize)
+                .columnRange(7, 7)
+                .rowRange(2, 2)
+                .browserResize(false)
+                .build()) {
+            Response page = request("GET", endpoint(terminal, "/"), null);
+            assertTrue(page.body().contains("\"resizable\":false"));
+            assertEquals(409, post(terminal, "/resize", form("cols", "50", "rows", "20")).status());
+            assertEquals(fixedSize, terminal.getTerminalSize());
         }
     }
 

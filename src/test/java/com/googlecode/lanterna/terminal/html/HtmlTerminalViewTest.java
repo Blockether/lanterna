@@ -77,6 +77,7 @@ public class HtmlTerminalViewTest {
         try (HtmlTerminalView view = HtmlTerminalView.serve(
                 grid, new TerminalSize(30, 8), "Interactive grid")) {
             assertTrue(view.getUrl().startsWith("http://127.0.0.1:"));
+            assertEquals(new TerminalSize(30, 8), view.getTerminal().getTerminalSize());
             assertTrue(view.renderHtml().contains("OFF"));
             assertTrue(rowText(view.getTerminal().snapshot(), 1).contains("<Toggle>"));
 

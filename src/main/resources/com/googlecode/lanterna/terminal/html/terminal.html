@@ -81,7 +81,7 @@ audio.media { align-self: center; height: min(54px, 100%); }
   }
 
   function requestResize() {
-    if (!boot.live) return;
+    if (!boot.live || !boot.resizable) return;
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
       const nextCols = Math.max(boot.min_cols, Math.min(boot.max_cols, Math.floor((viewport.clientWidth - (2 * cellWidth)) / cellWidth)));
@@ -272,7 +272,7 @@ audio.media { align-self: center; height: min(54px, 100%); }
   terminal.addEventListener('contextmenu', event => event.preventDefault());
 
   render(boot.frame);
-  new ResizeObserver(requestResize).observe(viewport);
+  if (boot.resizable) new ResizeObserver(requestResize).observe(viewport);
   Promise.resolve(document.fonts && document.fonts.ready).then(() => {
     measure();
     requestResize();
