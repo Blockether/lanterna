@@ -50,7 +50,7 @@ public final class HtmlTerminalRenderer {
     private static final String TEMPLATE_RESOURCE =
             "/com/googlecode/lanterna/terminal/html/terminal.html";
     private static final String TITLE_MARKER = "__LANTERNA_TITLE__";
-    private static final String BOOTSTRAP_MARKER = "__LANTERNA_BOOTSTRAP__";
+    private static final String BODY_MARKER = "__LANTERNA_BODY__";
     private static final String TEMPLATE = loadTemplate();
 
     private HtmlTerminalRenderer() {
@@ -207,86 +207,83 @@ public final class HtmlTerminalRenderer {
                 resolved.getRed(), resolved.getGreen(), resolved.getBlue());
     }
 
-    /** Serialize a frame without a JSON dependency. */
-    public static String toJson(Frame frame) {
+    /** Render one complete server-owned frame fragment. */
+    public static String renderFrame(Frame frame) {
         Objects.requireNonNull(frame, "frame");
-        StringBuilder json = new StringBuilder(Math.max(256, frame.runs().size() * 128));
-        json.append('{');
-        field(json, "version", frame.version()).append(',');
-        field(json, "cols", frame.columns()).append(',');
-        field(json, "rows", frame.rows()).append(',');
-        field(json, "default_fg", frame.defaultForeground()).append(',');
-        field(json, "default_bg", frame.defaultBackground()).append(',');
-        field(json, "cursor_visible", frame.cursorVisible()).append(',');
-        quote(json, "cursor").append(':');
-        if (frame.cursor() == null) json.append("null");
-        else {
-            json.append('{');
-            field(json, "col", frame.cursor().column()).append(',');
-            field(json, "row", frame.cursor().row());
-            json.append('}');
+        StringBuilder html = new StringBuilder(Math.max(256, frame.runs().size() * 160));
+        html.append("<div class=\"frame\" data-version=\"").append(frame.version())
+                .append("\" data-cols=\"").append(frame.columns())
+                .append("\" data-rows=\"").append(frame.rows())
+                .append("\" data-ink=\"").append(escapeHtml(frame.defaultForeground()))
+                .append("\" data-paper=\"").append(escapeHtml(frame.defaultBackground()))
+                .append("\"><div id=\"cells\">");
+        for (Run run : frame.runs()) appendRun(html, run);
+        html.append("</div><div id=\"media-layer\">");
+        for (HtmlMedia item : frame.media()) appendMedia(html, item);
+        html.append("</div><span id=\"cursor\" class=\"cursor\" aria-hidden=\"true\"");
+        if (!frame.cursorVisible() || frame.cursor() == null) html.append(" hidden");
+        if (frame.cursor() != null) {
+            html.append(" style=\"grid-column:").append(frame.cursor().column() + 1)
+                    .append(";grid-row:").append(frame.cursor().row() + 1)
+                    .append(";color:").append(escapeHtml(frame.defaultForeground())).append("\"");
         }
-        json.append(',');
-        quote(json, "runs").append(':').append('[');
-        for (int index = 0; index < frame.runs().size(); index++) {
-            if (index > 0) json.append(',');
-            appendRun(json, frame.runs().get(index));
-        }
-        json.append(']').append(',');
-        quote(json, "media").append(':').append('[');
-        for (int index = 0; index < frame.media().size(); index++) {
-            if (index > 0) json.append(',');
-            appendMedia(json, frame.media().get(index));
-        }
-        return json.append(']').append('}').toString();
+        return html.append("></span></div>").toString();
     }
 
-    private static void appendRun(StringBuilder json, Run run) {
+    private static void appendRun(StringBuilder html, Run run) {
         Style style = run.style();
-        json.append('{');
-        field(json, "x", run.x()).append(',');
-        field(json, "y", run.y()).append(',');
-        field(json, "width", run.width()).append(',');
-        field(json, "text", run.text()).append(',');
-        field(json, "fg", style.foreground()).append(',');
-        field(json, "bg", style.background()).append(',');
-        field(json, "bold", style.bold()).append(',');
-        field(json, "italic", style.italic()).append(',');
-        field(json, "underline", style.underline()).append(',');
-        field(json, "strike", style.strike()).append(',');
-        field(json, "blink", style.blink()).append(',');
-        field(json, "bordered", style.bordered()).append(',');
-        field(json, "fraktur", style.fraktur()).append(',');
-        field(json, "circled", style.circled());
-        json.append('}');
+        html.append("<span class=\"cell");
+        appendClass(html, style.bold(), "bold");
+        appendClass(html, style.italic(), "italic");
+        appendClass(html, style.underline(), "underline");
+        appendClass(html, style.strike(), "strike");
+        appendClass(html, style.blink(), "blink");
+        appendClass(html, style.bordered(), "bordered");
+        appendClass(html, style.fraktur(), "fraktur");
+        appendClass(html, style.circled(), "circled");
+        html.append("\" style=\"grid-column:").append(run.x() + 1)
+                .append(" / span ").append(run.width())
+                .append(";grid-row:").append(run.y() + 1)
+                .append(";color:").append(escapeHtml(style.foreground()))
+                .append(";background-color:").append(escapeHtml(style.background()))
+                .append("\">").append(escapeHtml(run.text())).append("</span>");
     }
 
-    private static void appendMedia(StringBuilder json, HtmlMedia media) {
+    private static void appendClass(StringBuilder html, boolean enabled, String name) {
+        if (enabled) html.append(' ').append(name);
+    }
+
+    private static void appendMedia(StringBuilder html, HtmlMedia media) {
         String element = switch (media.getKind()) {
             case IMAGE -> "img";
             case VIDEO -> "video";
             case AUDIO -> "audio";
         };
-        String encoded = Base64.getEncoder().encodeToString(media.dataUnsafe());
-        json.append('{');
-        field(json, "id", media.getId()).append(',');
-        field(json, "kind", element).append(',');
-        field(json, "src", "data:" + media.getMimeType() + ";base64," + encoded).append(',');
-        field(json, "description", media.getDescription()).append(',');
-        field(json, "x", media.getPosition().getColumn()).append(',');
-        field(json, "y", media.getPosition().getRow()).append(',');
-        field(json, "width", media.getSize().getColumns()).append(',');
-        field(json, "height", media.getSize().getRows()).append(',');
-        field(json, "controls", media.hasControls()).append(',');
-        field(json, "autoplay", media.isAutoplay()).append(',');
-        field(json, "loop", media.isLoop()).append(',');
-        field(json, "muted", media.isMuted());
-        json.append('}');
+        String source = "data:" + media.getMimeType() + ";base64,"
+                + Base64.getEncoder().encodeToString(media.dataUnsafe());
+        html.append('<').append(element)
+                .append(" class=\"media\" data-media-id=\"").append(escapeHtml(media.getId()))
+                .append("\" src=\"").append(escapeHtml(source))
+                .append("\" style=\"grid-column:").append(media.getPosition().getColumn() + 1)
+                .append(" / span ").append(media.getSize().getColumns())
+                .append(";grid-row:").append(media.getPosition().getRow() + 1)
+                .append(" / span ").append(media.getSize().getRows()).append("\"");
+        if (media.getKind() == HtmlMedia.Kind.IMAGE) {
+            html.append(" alt=\"").append(escapeHtml(media.getDescription())).append("\">");
+            return;
+        }
+        html.append(" aria-label=\"").append(escapeHtml(media.getDescription()))
+                .append("\" preload=\"metadata\"");
+        if (media.hasControls()) html.append(" controls");
+        if (media.isAutoplay()) html.append(" autoplay");
+        if (media.isLoop()) html.append(" loop");
+        if (media.isMuted()) html.append(" muted");
+        html.append("></").append(element).append('>');
     }
 
     /** Build a static, portable HTML document containing this exact frame. */
     public static String renderDocument(Frame frame, String title) {
-        return renderTemplate(frame, title, false, "", 1, 1000, 1, 1000, false);
+        return renderTemplate(frame, title, false, "", "", 1, 1000, 1, 1000, false);
     }
 
     public static String renderDocument(VirtualTerminal terminal, String title) {
@@ -296,95 +293,87 @@ public final class HtmlTerminalRenderer {
     static String renderLiveDocument(
             Frame frame,
             String title,
-            String token,
+            String endpointPrefix,
+            String endpointQuery,
             int minColumns,
             int maxColumns,
             int minRows,
             int maxRows,
             boolean browserResize) {
-        return renderTemplate(frame, title, true, token, minColumns, maxColumns, minRows, maxRows, browserResize);
+        return renderTemplate(
+                frame,
+                title,
+                true,
+                normalizePrefix(endpointPrefix),
+                endpointQuery == null ? "" : endpointQuery,
+                minColumns,
+                maxColumns,
+                minRows,
+                maxRows,
+                browserResize);
     }
 
     private static String renderTemplate(
             Frame frame,
             String title,
             boolean live,
-            String token,
+            String endpointPrefix,
+            String endpointQuery,
             int minColumns,
             int maxColumns,
             int minRows,
             int maxRows,
             boolean browserResize) {
+        Objects.requireNonNull(frame, "frame");
         String safeTitle = title == null || title.isBlank() ? "Lanterna terminal" : title;
-        StringBuilder bootstrap = new StringBuilder(toJson(frame).length() + 256);
-        bootstrap.append('{');
-        field(bootstrap, "live", live).append(',');
-        field(bootstrap, "token", token == null ? "" : token).append(',');
-        field(bootstrap, "title", safeTitle).append(',');
-        field(bootstrap, "min_cols", minColumns).append(',');
-        field(bootstrap, "max_cols", maxColumns).append(',');
-        field(bootstrap, "min_rows", minRows).append(',');
-        field(bootstrap, "max_rows", maxRows).append(',');
-        field(bootstrap, "resizable", browserResize).append(',');
-        quote(bootstrap, "frame").append(':').append(toJson(frame));
-        bootstrap.append('}');
-        return fillTemplate(escapeHtml(safeTitle), bootstrap.toString());
+        StringBuilder body = new StringBuilder(Math.max(512, frame.runs().size() * 160));
+        body.append("<body data-live=\"").append(live)
+                .append("\" data-endpoint-prefix=\"").append(escapeHtml(endpointPrefix))
+                .append("\" data-endpoint-query=\"").append(escapeHtml(endpointQuery))
+                .append("\" data-resizable=\"").append(browserResize)
+                .append("\" data-min-cols=\"").append(minColumns)
+                .append("\" data-max-cols=\"").append(maxColumns)
+                .append("\" data-min-rows=\"").append(minRows)
+                .append("\" data-max-rows=\"").append(maxRows)
+                .append("\" style=\"--ink:").append(escapeHtml(frame.defaultForeground()))
+                .append(";--paper:").append(escapeHtml(frame.defaultBackground())).append("\">")
+                .append("<div id=\"viewport\"><div id=\"terminal\" role=\"application\" ")
+                .append("aria-label=\"Terminal\" tabindex=\"-1\" style=\"grid-template-columns:repeat(")
+                .append(frame.columns()).append(",var(--cell-w));grid-template-rows:repeat(")
+                .append(frame.rows()).append(",var(--row-h))\">")
+                .append(renderFrame(frame))
+                .append("</div></div>")
+                .append("<textarea id=\"input\" aria-label=\"Terminal keyboard input\" autocomplete=\"off\" ")
+                .append("autocapitalize=\"off\" autocorrect=\"off\" spellcheck=\"false\"></textarea>")
+                .append("<span id=\"probe\" aria-hidden=\"true\">")
+                .append("00000000000000000000000000000000000000000000000000</span>")
+                .append("<template id=\"patch\"></template>");
+        return fillTemplate(escapeHtml(safeTitle), body.toString());
     }
 
-    private static StringBuilder field(StringBuilder json, String name, String value) {
-        quote(json, name).append(':');
-        return quote(json, value);
-    }
-
-    private static StringBuilder field(StringBuilder json, String name, long value) {
-        return quote(json, name).append(':').append(value);
-    }
-
-    private static StringBuilder field(StringBuilder json, String name, boolean value) {
-        return quote(json, name).append(':').append(value);
-    }
-
-    private static StringBuilder quote(StringBuilder json, String value) {
-        json.append('"');
-        String text = value == null ? "" : value;
-        for (int index = 0; index < text.length(); index++) {
-            char character = text.charAt(index);
-            switch (character) {
-                case '"' -> json.append("\\\"");
-                case '\\' -> json.append("\\\\");
-                case '\b' -> json.append("\\b");
-                case '\f' -> json.append("\\f");
-                case '\n' -> json.append("\\n");
-                case '\r' -> json.append("\\r");
-                case '\t' -> json.append("\\t");
-                case '<' -> json.append("\\u003c");
-                case '>' -> json.append("\\u003e");
-                case '&' -> json.append("\\u0026");
-                default -> {
-                    if (character < 0x20 || character == '\u2028' || character == '\u2029') {
-                        json.append(String.format(Locale.ROOT, "\\u%04x", (int) character));
-                    }
-                    else json.append(character);
-                }
-            }
+    private static String normalizePrefix(String value) {
+        String prefix = value == null ? "" : value.trim();
+        if (!prefix.isEmpty() && !prefix.startsWith("/")) {
+            throw new IllegalArgumentException("endpoint prefix must be empty or start with /");
         }
-        return json.append('"');
+        while (prefix.endsWith("/")) prefix = prefix.substring(0, prefix.length() - 1);
+        return prefix;
     }
 
-    private static String fillTemplate(String title, String bootstrap) {
+    private static String fillTemplate(String title, String body) {
         int titleAt = TEMPLATE.indexOf(TITLE_MARKER);
-        int bootstrapAt = TEMPLATE.indexOf(BOOTSTRAP_MARKER);
+        int bodyAt = TEMPLATE.indexOf(BODY_MARKER);
         if (titleAt < 0
-                || bootstrapAt < titleAt + TITLE_MARKER.length()
+                || bodyAt < titleAt + TITLE_MARKER.length()
                 || TEMPLATE.indexOf(TITLE_MARKER, titleAt + TITLE_MARKER.length()) >= 0
-                || TEMPLATE.indexOf(BOOTSTRAP_MARKER, bootstrapAt + BOOTSTRAP_MARKER.length()) >= 0) {
+                || TEMPLATE.indexOf(BODY_MARKER, bodyAt + BODY_MARKER.length()) >= 0) {
             throw new IllegalStateException("HTML terminal template markers are invalid");
         }
         return TEMPLATE.substring(0, titleAt)
                 + title
-                + TEMPLATE.substring(titleAt + TITLE_MARKER.length(), bootstrapAt)
-                + bootstrap
-                + TEMPLATE.substring(bootstrapAt + BOOTSTRAP_MARKER.length());
+                + TEMPLATE.substring(titleAt + TITLE_MARKER.length(), bodyAt)
+                + body
+                + TEMPLATE.substring(bodyAt + BODY_MARKER.length());
     }
 
     private static String escapeHtml(String value) {

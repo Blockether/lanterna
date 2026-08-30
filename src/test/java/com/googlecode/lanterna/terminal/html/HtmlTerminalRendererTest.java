@@ -116,7 +116,7 @@ public class HtmlTerminalRendererTest {
     }
 
     @Test
-    public void jsonAndPortableDocumentSafelyEmbedAllMediaKinds() {
+    public void documentsAndFramesAreServerRenderedWithoutClientFrameConstruction() {
         DefaultVirtualTerminal terminal = new DefaultVirtualTerminal(new TerminalSize(12, 6));
         terminal.putCharacter('<');
         terminal.setCursorVisible(true);
@@ -132,23 +132,46 @@ public class HtmlTerminalRendererTest {
                 HtmlTerminalRenderer.DEFAULT_BACKGROUND,
                 media);
 
-        String json = HtmlTerminalRenderer.toJson(frame);
-        assertFalse(json.contains("</script>"));
-        assertTrue(json.contains("\\u003c/script\\u003e\\u0026audio"));
-        assertTrue(json.contains("data:image/png;base64,"));
-        assertTrue(json.contains("data:video/mp4;base64,"));
-        assertTrue(json.contains("data:audio/mpeg;base64,"));
-        assertTrue(json.contains("\"cursor\":{\"col\":3,\"row\":2}"));
+        String fragment = HtmlTerminalRenderer.renderFrame(frame);
+        assertTrue(fragment.startsWith("<div class=\"frame\""));
+        assertTrue(fragment.contains("&lt;"));
+        assertTrue(fragment.contains("<img class=\"media\""));
+        assertTrue(fragment.contains("<video class=\"media\""));
+        assertTrue(fragment.contains("<audio class=\"media\""));
+        assertTrue(fragment.contains("data:image/png;base64,"));
+        assertTrue(fragment.contains("data:video/mp4;base64,"));
+        assertTrue(fragment.contains("data:audio/mpeg;base64,"));
+        assertFalse(fragment.contains("</script>&audio"));
 
         String html = HtmlTerminalRenderer.renderDocument(frame, "<review & verify>");
         assertTrue(html.startsWith("<!doctype html>"));
         assertTrue(html.contains("&lt;review &amp; verify&gt;"));
-        assertTrue(html.contains("data:image/png;base64,"));
-        assertTrue(html.contains("data:video/mp4;base64,"));
-        assertTrue(html.contains("data:audio/mpeg;base64,"));
-        assertTrue(html.contains("\"resizable\":false"));
+        assertTrue(html.contains(fragment));
+        assertTrue(html.contains("data-live=\"false\""));
+        assertFalse(html.contains("application/json"));
+        assertFalse(html.contains("response.json()"));
+        assertFalse(html.contains("document.createElement('span')"));
         assertFalse(html.contains("__LANTERNA_"));
-        assertFalse(html.contains("</script>&audio"));
+    }
+
+    @Test
+    public void liveDocumentStreamsServerRenderedFragmentsFromConfiguredEndpoints() {
+        DefaultVirtualTerminal terminal = new DefaultVirtualTerminal(new TerminalSize(24, 8));
+        terminal.putCharacter('S');
+        HtmlTerminalRenderer.Frame frame = HtmlTerminalRenderer.snapshot(terminal, 7);
+
+        String html = HtmlTerminalRenderer.renderLiveDocument(
+                frame, "Stream", "/tui", "", 20, 400, 8, 200, true);
+
+        assertTrue(html.contains("data-endpoint-prefix=\"/tui\""));
+        assertTrue(html.contains("const eventUrl = endpoint('/events')"));
+        assertTrue(html.contains("after=${frame.dataset.version}"));
+        assertTrue(html.contains("post('/input'"));
+        assertTrue(html.contains("post('/resize'"));
+        assertTrue(html.contains("template.innerHTML = event.data"));
+        assertTrue(html.contains("resizeToViewport();"));
+        assertTrue(html.contains("current.outerHTML === replacement.outerHTML"));
+        assertFalse(html.contains("/frame"));
     }
 
     @Test
@@ -159,11 +182,11 @@ public class HtmlTerminalRendererTest {
         }
         HtmlTerminalRenderer.Frame frame = HtmlTerminalRenderer.snapshot(terminal, 0);
 
-        String html = HtmlTerminalRenderer.renderDocument(frame, "__LANTERNA_BOOTSTRAP__");
+        String html = HtmlTerminalRenderer.renderDocument(frame, "__LANTERNA_BODY__");
 
-        assertTrue(html.contains("<title>__LANTERNA_BOOTSTRAP__</title>"));
+        assertTrue(html.contains("<title>__LANTERNA_BODY__</title>"));
         assertTrue(html.contains("__LANTERNA_TITLE__"));
-        assertEquals(1, occurrences(html, "<script id=\"bootstrap\""));
+        assertEquals(1, occurrences(html, "<div class=\"frame\""));
         assertEquals(1, occurrences(html, "<!doctype html>"));
     }
 
@@ -174,8 +197,8 @@ public class HtmlTerminalRendererTest {
                 HtmlTerminalRenderer.snapshot(terminal, 0), "Resolved tracks");
 
         assertTrue(html.contains(
-                "cellWidth = terminal.getBoundingClientRect().width / Math.max(1, cols);"));
-        assertTrue(html.contains("const columnWidth = box.width / Math.max(1, cols);"));
+                "cellWidth = terminal.getBoundingClientRect().width / Math.max(1, columns);"));
+        assertTrue(html.contains("const columnWidth = box.width / Math.max(1, columns);"));
         assertTrue(html.contains("const lineHeight = box.height / Math.max(1, rows);"));
     }
 

@@ -11,6 +11,18 @@
 > and a complete HTML terminal backend. It remains a drop-in replacement for
 > `com.googlecode.lanterna:lanterna:3.1.5` and adds focused public packages.
 
+### `3.1.5-vis.44`
+
+- Make the live HTML terminal server-rendered: the first document contains the
+  resolved cells and media, and later paints arrive as HTML fragments over SSE.
+  Browser code now only swaps server markup and forwards input and resize events;
+  it no longer receives or reconstructs a JSON frame model.
+- Add transport-neutral `HtmlTerminal` mode for application-owned gateways:
+  `embeddedServer(false)`, `renderLiveHtml`, `awaitFrame`, `submitBrowserInput`
+  and `resizeFromBrowser` open no Lanterna socket or executor.
+- Preserve unchanged image, video and audio elements across paints, and
+  resynchronize browser geometry when an SSE stream reconnects to a fresh terminal.
+
 ### `3.1.5-vis.43`
 
 - Add `HtmlTerminal`, a complete loopback browser terminal that can replace an

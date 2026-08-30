@@ -32,6 +32,7 @@ import com.sun.net.httpserver.HttpServer;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URLDecoder;
@@ -94,16 +95,11 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
         minRows = builder.minRows;
         maxRows = builder.maxRows;
         browserResize = builder.browserResize;
-        token = UUID.randomUUID().toString();
         version = new AtomicLong();
         frameMonitor = new Object();
         closed = new AtomicBoolean();
         serverStopped = new AtomicBoolean();
         media = Collections.synchronizedMap(new LinkedHashMap<>());
-        executor = Executors.newCachedThreadPool(new DaemonThreadFactory("lanterna-html"));
-        server = HttpServer.create(new InetSocketAddress("127.0.0.1", builder.port), 0);
-        server.setExecutor(executor);
-        server.createContext("/", new TerminalHandler());
         addVirtualTerminalListener(new VirtualTerminalListener() {
             @Override
             public void onFlush() {
@@ -124,24 +120,42 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
                 changed();
             }
         });
-        server.start();
-        int boundPort = server.getAddress().getPort();
-        uri = URI.create("http://127.0.0.1:" + boundPort + "/?token=" + token);
+        if (builder.embeddedServer) {
+            token = UUID.randomUUID().toString();
+            executor = Executors.newCachedThreadPool(new DaemonThreadFactory("lanterna-html"));
+            server = HttpServer.create(new InetSocketAddress("127.0.0.1", builder.port), 0);
+            server.setExecutor(executor);
+            server.createContext("/", new TerminalHandler());
+            server.start();
+            uri = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/?token=" + token);
+        }
+        else {
+            token = "";
+            executor = null;
+            server = null;
+            uri = null;
+        }
     }
 
     public static Builder builder() {
         return new Builder();
     }
 
+    public boolean hasEmbeddedServer() {
+        return server != null;
+    }
+
     public URI getUri() {
+        requireEmbeddedServer();
         return uri;
     }
 
     public String getUrl() {
-        return uri.toString();
+        return getUri().toString();
     }
 
     public int getPort() {
+        requireEmbeddedServer();
         return server.getAddress().getPort();
     }
 
@@ -165,6 +179,49 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
     /** Current frame as one file with inline CSS, JavaScript, cells and media. */
     public String renderHtml() {
         return HtmlTerminalRenderer.renderDocument(snapshot(), title);
+    }
+
+    /** Current cells and media as server-rendered HTML. */
+    public String renderFrameHtml() {
+        return HtmlTerminalRenderer.renderFrame(snapshot());
+    }
+
+    /** A live SSR document for an external HTTP transport such as an application gateway. */
+    public String renderLiveHtml(String endpointPrefix) {
+        return HtmlTerminalRenderer.renderLiveDocument(
+                snapshot(), title, endpointPrefix, "", minColumns, maxColumns, minRows, maxRows, browserResize);
+    }
+
+    /** Wait for a newer frame, or return the current frame when the timeout expires. */
+    public HtmlTerminalRenderer.Frame awaitFrame(long afterVersion, long timeoutMillis) {
+        if (timeoutMillis < 0) throw new IllegalArgumentException("timeoutMillis must not be negative");
+        if (version.get() == afterVersion && !closed.get() && timeoutMillis > 0) {
+            synchronized (frameMonitor) {
+                if (version.get() == afterVersion && !closed.get()) {
+                    try {
+                        frameMonitor.wait(timeoutMillis);
+                    }
+                    catch (InterruptedException exception) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            }
+        }
+        return snapshot();
+    }
+
+    /** Submit browser form fields as ordinary Lanterna input. */
+    public void submitBrowserInput(Map<String, String> form) {
+        addBrowserInput(Objects.requireNonNull(form, "form"));
+    }
+
+    /** Clamp and apply a viewport-driven terminal size. */
+    public TerminalSize resizeFromBrowser(int columns, int rows) {
+        if (!browserResize) throw new IllegalStateException("Browser resize is disabled");
+        TerminalSize size = new TerminalSize(
+                clamp(columns, minColumns, maxColumns), clamp(rows, minRows, maxRows));
+        if (!size.equals(getTerminalSize())) setTerminalSize(size);
+        return size;
     }
 
     public void writeHtml(Path path) throws IOException {
@@ -231,12 +288,16 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
 
     private void stopServer() {
         if (serverStopped.compareAndSet(false, true)) {
-            server.stop(0);
-            executor.shutdownNow();
+            if (server != null) server.stop(0);
+            if (executor != null) executor.shutdownNow();
             synchronized (frameMonitor) {
                 frameMonitor.notifyAll();
             }
         }
+    }
+
+    private void requireEmbeddedServer() {
+        if (server == null) throw new IllegalStateException("Embedded HTML server is disabled");
     }
 
     private void changed() {
@@ -244,22 +305,6 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
         synchronized (frameMonitor) {
             frameMonitor.notifyAll();
         }
-    }
-
-    private long awaitVersion(long after) {
-        if (version.get() == after && !closed.get()) {
-            synchronized (frameMonitor) {
-                if (version.get() == after && !closed.get()) {
-                    try {
-                        frameMonitor.wait(1_000);
-                    }
-                    catch (InterruptedException exception) {
-                        Thread.currentThread().interrupt();
-                    }
-                }
-            }
-        }
-        return version.get();
     }
 
     private final class TerminalHandler implements HttpHandler {
@@ -289,7 +334,15 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
         String path = exchange.getRequestURI().getPath();
         if ("GET".equals(method) && "/".equals(path)) {
             String page = HtmlTerminalRenderer.renderLiveDocument(
-                    snapshot(), title, token, minColumns, maxColumns, minRows, maxRows, browserResize);
+                    snapshot(),
+                    title,
+                    "",
+                    "?token=" + token,
+                    minColumns,
+                    maxColumns,
+                    minRows,
+                    maxRows,
+                    browserResize);
             send(exchange, 200, "text/html; charset=utf-8", page);
             return;
         }
@@ -297,28 +350,59 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
             send(exchange, 200, "text/plain; charset=utf-8", "ok");
             return;
         }
-        if ("GET".equals(method) && "/frame".equals(path)) {
-            awaitVersion(parseLong(query.get("after"), -1));
-            send(exchange, 200, "application/json; charset=utf-8",
-                    HtmlTerminalRenderer.toJson(snapshot()));
+        if ("GET".equals(method) && "/events".equals(path)) {
+            long after = parseLong(exchange.getRequestHeaders().getFirst("Last-Event-ID"),
+                    parseLong(query.get("after"), -1));
+            streamEvents(exchange, after);
             return;
         }
         if ("POST".equals(method) && "/resize".equals(path)) {
-            if (!browserResize) throw new RequestException(409, "Browser resize is disabled");
             Map<String, String> form = decodeForm(readBody(exchange));
-            int columns = clamp((int) parseLong(form.get("cols"), minColumns), minColumns, maxColumns);
-            int rows = clamp((int) parseLong(form.get("rows"), minRows), minRows, maxRows);
-            TerminalSize size = new TerminalSize(columns, rows);
-            if (!size.equals(getTerminalSize())) setTerminalSize(size);
+            try {
+                resizeFromBrowser(
+                        (int) parseLong(form.get("cols"), minColumns),
+                        (int) parseLong(form.get("rows"), minRows));
+            }
+            catch (IllegalStateException exception) {
+                throw new RequestException(409, exception.getMessage());
+            }
             send(exchange, 204, "text/plain; charset=utf-8", "");
             return;
         }
         if ("POST".equals(method) && "/input".equals(path)) {
-            addBrowserInput(decodeForm(readBody(exchange)));
+            submitBrowserInput(decodeForm(readBody(exchange)));
             send(exchange, 204, "text/plain; charset=utf-8", "");
             return;
         }
         throw new RequestException(404, "Not found");
+    }
+
+    private void streamEvents(HttpExchange exchange, long afterVersion) throws IOException {
+        exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
+        exchange.getResponseHeaders().set("Cache-Control", "no-store, no-transform");
+        exchange.getResponseHeaders().set("X-Accel-Buffering", "no");
+        exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
+        exchange.sendResponseHeaders(200, 0);
+        try (OutputStream output = exchange.getResponseBody()) {
+            long after = afterVersion;
+            while (!closed.get()) {
+                HtmlTerminalRenderer.Frame frame = awaitFrame(after, 15_000);
+                String event;
+                if (frame.version() == after) event = ": keepalive\n\n";
+                else {
+                    StringBuilder text = new StringBuilder();
+                    text.append("id: ").append(frame.version()).append('\n');
+                    text.append("event: frame\n");
+                    for (String line : HtmlTerminalRenderer.renderFrame(frame).split("\\R", -1)) {
+                        text.append("data: ").append(line).append('\n');
+                    }
+                    event = text.append('\n').toString();
+                    after = frame.version();
+                }
+                output.write(event.getBytes(StandardCharsets.UTF_8));
+                output.flush();
+            }
+        }
     }
 
     private void addBrowserInput(Map<String, String> form) {
@@ -480,6 +564,7 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
         private int minRows = 8;
         private int maxRows = 200;
         private boolean browserResize = true;
+        private boolean embeddedServer = true;
 
         private Builder() {
         }
@@ -529,6 +614,12 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
         /** Enable or disable viewport-driven terminal resizing. */
         public Builder browserResize(boolean enabled) {
             browserResize = enabled;
+            return this;
+        }
+
+        /** Disable the loopback server when another HTTP transport owns the terminal. */
+        public Builder embeddedServer(boolean enabled) {
+            embeddedServer = enabled;
             return this;
         }
 

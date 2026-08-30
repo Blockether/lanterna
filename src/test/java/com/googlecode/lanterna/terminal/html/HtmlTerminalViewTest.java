@@ -42,9 +42,9 @@ public class HtmlTerminalViewTest {
         assertTrue(html.contains("Direct painter"));
         assertTrue(html.contains("Painted"));
         assertTrue(html.contains("#0c2238"));
-        assertTrue(html.contains("\"bold\":true"));
-        assertTrue(html.contains("\"underline\":true"));
-        assertTrue(html.contains("\"live\":false"));
+        assertTrue(html.contains("class=\"cell bold underline\""));
+        assertTrue(html.contains("data-live=\"false\""));
+        assertFalse(html.contains("application/json"));
     }
 
     @Test
@@ -60,7 +60,8 @@ public class HtmlTerminalViewTest {
         assertTrue(html.contains("Model"));
         assertTrue(html.contains("openai"));
         assertTrue(html.contains("gpt"));
-        assertTrue(html.contains("gridColumn = `${run.x + 1} / span ${run.width}`"));
+        assertTrue(html.contains("style=\"grid-column:"));
+        assertFalse(html.contains("document.createElement('span')"));
         assertFalse(html.contains("grid-template-areas"));
     }
 
@@ -91,7 +92,7 @@ public class HtmlTerminalViewTest {
                 String exported = Files.readString(htmlFile);
                 assertTrue(exported.contains("Interactive grid"));
                 assertTrue(exported.contains("ON"));
-                assertTrue(exported.contains("\"live\":false"));
+                assertTrue(exported.contains("data-live=\"false\""));
             }
             finally {
                 Files.deleteIfExists(htmlFile);

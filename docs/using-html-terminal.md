@@ -37,6 +37,39 @@ JavaScript, cells and media. The resulting file needs no server or external
 asset. It is a snapshot: an arbitrary Java application can remain interactive
 only while its live `HtmlTerminal` process is running.
 
+The live page is server-rendered: its first response already contains the resolved
+cell and media markup. Later paints arrive as HTML fragments on an `EventSource`
+stream. The small browser script only swaps those fragments, measures the viewport,
+and forwards input and resize forms; it does not receive a frame model or construct
+terminal cells. Unchanged media elements are retained across paints so active audio
+or video does not restart when unrelated cells change.
+
+## Application-owned HTTP transport
+
+Disable the loopback server when an application gateway should own the route,
+authentication and connection lifecycle:
+
+```java
+try (HtmlTerminal terminal = HtmlTerminal.builder()
+        .embeddedServer(false)
+        .build()) {
+    String firstResponse = terminal.renderLiveHtml("/terminal");
+
+    long cursor = terminal.snapshot().version();
+    HtmlTerminalRenderer.Frame frame = terminal.awaitFrame(cursor, 15_000);
+    String eventFragment = HtmlTerminalRenderer.renderFrame(frame);
+
+    terminal.submitBrowserInput(formFields);
+    terminal.resizeFromBrowser(columns, rows);
+}
+```
+
+The host serves `renderLiveHtml` on the route prefix, carries each newer
+`renderFrame` result as an SSE `frame` event, and maps the browser's `/input` and
+`/resize` forms to the two methods above. It remains responsible for authorization,
+SSE keepalives and shutdown. This mode opens no socket and starts no HTTP executor
+inside Lanterna.
+
 ## One component or painted view
 
 `HtmlTerminalView` is the short path for component development:
