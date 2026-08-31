@@ -63,6 +63,8 @@ public class TTYDeviceControl {
     // struct termios — BSD/macOS: 4 x tcflag_t(unsigned long) then cc_t c_cc[NCCS=20]
     //                  Linux:     4 x tcflag_t(unsigned int) + cc_t c_line then cc_t c_cc[NCCS=32]
     private static final int TERMIOS_BYTES = 128;              // both are <= 72; over-allocate
+    private static final int IFLAG_OFFSET = 0;
+    private static final boolean IFLAG_IS_LONG = BSD;
     private static final int LFLAG_OFFSET = BSD ? 24 : 12;
     private static final boolean LFLAG_IS_LONG = BSD;
     private static final int CC_OFFSET = BSD ? 32 : 17;
@@ -70,9 +72,10 @@ public class TTYDeviceControl {
     private static final int V_MIN = BSD ? 16 : 6;
     private static final int V_TIME = BSD ? 17 : 5;
 
+    private static final long IXON = BSD ? 0x00000200L : 0x00000400L;
     private static final long ECHO = 0x00000008L;              // same value on both
     private static final long ICANON = BSD ? 0x00000100L : 0x00000002L;
-
+    private static final long IEXTEN = BSD ? 0x00000400L : 0x00008000L;
     private static final byte VDISABLE = (byte) 0xff;          // _POSIX_VDISABLE
     private static final byte CTRL_C = 3;
 
@@ -221,10 +224,24 @@ public class TTYDeviceControl {
 
     /**
      * Turns canonical (line) mode (termios {@code ICANON}) on or off. Switching it off also sets
-     * {@code VMIN=1}/{@code VTIME=0}, mirroring {@code stty -icanon min 1}.
+     * {@code VMIN=1}/{@code VTIME=0} and disables {@code IEXTEN}/{@code IXON}, so literal-next and
+     * software flow control cannot consume control keystrokes before the input decoder sees them.
      */
     public synchronized void setCanonicalMode(boolean enabled) throws IOException {
-        updateLocalFlags(ICANON, enabled, !enabled);
+        checkOpen();
+        if (tcgetattr(current) != 0) {
+            throw new IOException("tcgetattr failed");
+        }
+        setFlags(LFLAG_OFFSET, LFLAG_IS_LONG, ICANON, enabled);
+        if (!enabled) {
+            setFlags(LFLAG_OFFSET, LFLAG_IS_LONG, IEXTEN, false);
+            setFlags(IFLAG_OFFSET, IFLAG_IS_LONG, IXON, false);
+            current.set(ValueLayout.JAVA_BYTE, CC_OFFSET + V_MIN, (byte) 1);
+            current.set(ValueLayout.JAVA_BYTE, CC_OFFSET + V_TIME, (byte) 0);
+        }
+        if (tcsetattr(current) != 0) {
+            throw new IOException("tcsetattr failed");
+        }
     }
 
     /**
@@ -293,22 +310,24 @@ public class TTYDeviceControl {
         if (tcgetattr(current) != 0) {
             throw new IOException("tcgetattr failed");
         }
-        if (LFLAG_IS_LONG) {
-            long flags = current.get(ValueLayout.JAVA_LONG, LFLAG_OFFSET);
-            flags = set ? (flags | mask) : (flags & ~mask);
-            current.set(ValueLayout.JAVA_LONG, LFLAG_OFFSET, flags);
-        }
-        else {
-            int flags = current.get(ValueLayout.JAVA_INT, LFLAG_OFFSET);
-            flags = set ? (int) (flags | mask) : (int) (flags & ~mask);
-            current.set(ValueLayout.JAVA_INT, LFLAG_OFFSET, flags);
-        }
+        setFlags(LFLAG_OFFSET, LFLAG_IS_LONG, mask, set);
         if (rawReadTimings) {
             current.set(ValueLayout.JAVA_BYTE, CC_OFFSET + V_MIN, (byte) 1);
             current.set(ValueLayout.JAVA_BYTE, CC_OFFSET + V_TIME, (byte) 0);
         }
         if (tcsetattr(current) != 0) {
             throw new IOException("tcsetattr failed");
+        }
+    }
+
+    private void setFlags(int offset, boolean isLong, long mask, boolean set) {
+        if (isLong) {
+            long flags = current.get(ValueLayout.JAVA_LONG, offset);
+            current.set(ValueLayout.JAVA_LONG, offset, set ? (flags | mask) : (flags & ~mask));
+        }
+        else {
+            int flags = current.get(ValueLayout.JAVA_INT, offset);
+            current.set(ValueLayout.JAVA_INT, offset, set ? (int) (flags | mask) : (int) (flags & ~mask));
         }
     }
 

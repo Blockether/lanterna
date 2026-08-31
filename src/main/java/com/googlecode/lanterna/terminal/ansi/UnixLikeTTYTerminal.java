@@ -217,9 +217,11 @@ public abstract class UnixLikeTTYTerminal extends UnixLikeTerminal {
                 abandonNativeControl();
             }
         }
-        runSTTYCommand(enabled ? "icanon" : "-icanon");
-        if(!enabled) {
-            runSTTYCommand("min", "1");
+        if(enabled) {
+            runSTTYCommand("icanon");
+        }
+        else {
+            runSTTYCommand("-icanon", "min", "1", "-iexten", "-ixon");
         }
     }
 

@@ -32,8 +32,18 @@ public class MouseAction extends KeyStroke {
     private final TerminalPosition position;
     private final int count;
 
-    /** A queued pointer batch plus the first non-pointer event consumed while draining it. */
-    public record CoalescedInput(KeyStroke key, Long scrollDelta, int dragCount, KeyStroke nextKey) {
+    /** Maximum directional wheel momentum retained by {@link #mergeWheelDelta(int, int)}. */
+    public static final int WHEEL_MOMENTUM_CAP = 12;
+
+    /** Idle window during which wheel direction remains locked against inertia-tail jitter. */
+    public static final long WHEEL_MOMENTUM_HOLD_MILLIS = 150L;
+
+    /** Internal canonical input plus the first different event consumed while draining its run. */
+    record CoalescedInput(KeyStroke key, KeyStroke nextKey) {
+    }
+
+    /** Updated directional momentum and the effective wheel delta, which is null when absorbed. */
+    public record WheelMomentum(int momentum, Integer delta) {
     }
 
     /**
@@ -106,48 +116,99 @@ public class MouseAction extends KeyStroke {
     }
 
     /**
-     * Coalesces consecutive queued wheel or drag events. Wheel counts are summed, while drag input keeps the latest
-     * pointer position and reports how many events were consumed. The first different event is returned for replay.
+     * Merges one signed wheel delta into directional momentum. Opposing inertia-tail jitter brakes the stored direction
+     * without leaking through; only opposition beyond the remaining momentum starts a real reversal.
      */
-    public static CoalescedInput coalesceQueued(
+    public static WheelMomentum mergeWheelDelta(int momentum, int rawDelta) {
+        if (rawDelta == 0) return new WheelMomentum(momentum, null);
+
+        if (momentum == 0 || Integer.signum(rawDelta) == Integer.signum(momentum)) {
+            long accumulated = (long) momentum + rawDelta;
+            return new WheelMomentum(capWheelMomentum(accumulated), rawDelta);
+        }
+
+        long after = (long) momentum + rawDelta;
+        if (after == 0) return new WheelMomentum(0, null);
+        if (Long.signum(after) == Integer.signum(momentum)) {
+            return new WheelMomentum(capWheelMomentum(after), null);
+        }
+
+        int reversal = Math.toIntExact(after);
+        return new WheelMomentum(reversal, reversal);
+    }
+
+    /**
+     * Returns wheel momentum after an idle interval. The direction survives the complete hold window, then expires.
+     */
+    public static int decayWheelMomentum(int momentum, long idleMillis) {
+        if (momentum == 0) return 0;
+        long idle = Math.max(0L, idleMillis);
+        if (idle >= WHEEL_MOMENTUM_HOLD_MILLIS) return 0;
+
+        int scaled = (int) Math.round(
+                momentum * (1.0 - ((double) idle / (double) WHEEL_MOMENTUM_HOLD_MILLIS)));
+        return scaled == 0 ? Integer.signum(momentum) : scaled;
+    }
+
+    private static int capWheelMomentum(long value) {
+        return (int) Math.max(-WHEEL_MOMENTUM_CAP, Math.min(WHEEL_MOMENTUM_CAP, value));
+    }
+    /**
+     * Coalesces consecutive queued wheel or drag events into one canonical {@link MouseAction}. Wheel counts are netted
+     * into a signed action at the latest pointer position; drag input keeps the latest position and summed count. The
+     * first different event is returned for replay.
+     */
+    static CoalescedInput coalesceQueued(
             KeyStroke first, Supplier<? extends KeyStroke> pollNext) {
         Objects.requireNonNull(pollNext, "pollNext");
         if (!(first instanceof MouseAction firstMouse)) {
-            return new CoalescedInput(first, null, 1, null);
+            return new CoalescedInput(first, null);
         }
 
         int firstScroll = firstMouse.getScrollDelta();
         if (firstScroll != 0) {
             long scroll = firstScroll;
+            MouseAction latest = firstMouse;
             KeyStroke next = null;
             while ((next = pollNext.get()) != null) {
                 if (next instanceof MouseAction mouse && mouse.getScrollDelta() != 0) {
                     scroll += mouse.getScrollDelta();
+                    latest = mouse;
                 }
                 else {
                     break;
                 }
             }
-            return new CoalescedInput(first, scroll == 0 ? null : scroll, 1, next);
+            if (scroll == 0) return new CoalescedInput(null, next);
+
+            boolean up = scroll < 0;
+            MouseAction coalesced = new MouseAction(
+                    up ? MouseActionType.SCROLL_UP : MouseActionType.SCROLL_DOWN,
+                    up ? 4 : 5,
+                    latest.getPosition(),
+                    Math.toIntExact(Math.abs(scroll)));
+            return new CoalescedInput(coalesced, next);
         }
 
         if (firstMouse.getActionType() == MouseActionType.DRAG) {
             MouseAction latest = firstMouse;
             int dragCount = firstMouse.getCount();
-            KeyStroke next;
+            KeyStroke next = null;
             while ((next = pollNext.get()) != null) {
                 if (next instanceof MouseAction mouse && mouse.getActionType() == MouseActionType.DRAG) {
                     latest = mouse;
-                    dragCount += mouse.getCount();
+                    dragCount = Math.addExact(dragCount, mouse.getCount());
                 }
                 else {
-                    return new CoalescedInput(latest, null, dragCount, next);
+                    break;
                 }
             }
-            return new CoalescedInput(latest, null, dragCount, null);
+            MouseAction coalesced = new MouseAction(
+                    MouseActionType.DRAG, latest.getButton(), latest.getPosition(), dragCount);
+            return new CoalescedInput(coalesced, next);
         }
 
-        return new CoalescedInput(first, null, 1, null);
+        return new CoalescedInput(first, null);
     }
     
     public boolean isMouseDown() {

@@ -47,7 +47,8 @@ public class InputProtocolTest {
         assertKey("\r\0", KeyType.Enter, false, false, false);
         assertKey("\u001b\n", KeyType.Enter, false, true, false);
         assertKey("\u001b\u007f", KeyType.Backspace, false, true, false);
-        assertKey("\b", KeyType.Character, true, false, false);
+        assertCharacterKey("\b", 'h', true, false, false);
+        assertCharacterKey("\u0007", 'g', true, false, false);
         assertKey("\u001b[1;4A", KeyType.ArrowUp, false, true, true);
         assertKey("\u001b[200~", KeyType.PasteStart, false, false, false);
         assertKey("\u001b[201~", KeyType.PasteEnd, false, false, false);
@@ -103,30 +104,78 @@ public class InputProtocolTest {
     }
 
     @Test
-    public void queuedMouseInputCoalescesInsideLanterna() {
+    public void queuedMouseInputCoalescesToCanonicalMouseActions() {
+        TerminalPosition latestWheel = new TerminalPosition(5, 4);
         Queue<KeyStroke> wheel = new ArrayDeque<>(List.of(
                 new MouseAction(MouseActionType.SCROLL_UP, 4, TerminalPosition.TOP_LEFT_CORNER, 2),
-                new MouseAction(MouseActionType.SCROLL_UP, 4, TerminalPosition.TOP_LEFT_CORNER, 3),
+                new MouseAction(MouseActionType.SCROLL_UP, 4, latestWheel, 3),
                 new KeyStroke(KeyType.Enter)));
-        MouseAction.CoalescedInput wheelBatch = MouseAction.coalesceQueued(wheel.remove(), wheel::poll);
-        assertEquals(Long.valueOf(-5), wheelBatch.scrollDelta());
-        assertEquals(1, wheelBatch.dragCount());
-        assertEquals(KeyType.Enter, wheelBatch.nextKey().getKeyType());
+        InputCoalescer wheelInput = new InputCoalescer();
+        MouseAction wheelAction = (MouseAction) wheelInput.next(wheel::poll, wheel::poll);
+        assertEquals(MouseActionType.SCROLL_UP, wheelAction.getActionType());
+        assertEquals(4, wheelAction.getButton());
+        assertEquals(5, wheelAction.getCount());
+        assertEquals(-5, wheelAction.getScrollDelta());
+        assertEquals(latestWheel, wheelAction.getPosition());
+        assertTrue(wheelInput.inputPending(() -> { fail("lookahead was not retained"); return null; }));
+        assertEquals(KeyType.Enter, wheelInput.next(
+                () -> { fail("retained input was not replayed"); return null; },
+                () -> { fail("non-pointer input must not drain"); return null; }).getKeyType());
+        wheelInput.replay(new KeyStroke(KeyType.Tab));
+        assertEquals(KeyType.Tab, wheelInput.next(
+                () -> { fail("replayed application input was not retained"); return null; },
+                () -> { fail("replayed non-pointer input must not drain"); return null; }).getKeyType());
 
         Queue<KeyStroke> jitter = new ArrayDeque<>(List.of(
                 new MouseAction(MouseActionType.SCROLL_UP, 4, TerminalPosition.TOP_LEFT_CORNER),
                 new MouseAction(MouseActionType.SCROLL_DOWN, 5, TerminalPosition.TOP_LEFT_CORNER)));
-        assertNull(MouseAction.coalesceQueued(jitter.remove(), jitter::poll).scrollDelta());
-        TerminalPosition latest = new TerminalPosition(8, 6);
+        assertNull(new InputCoalescer().next(jitter::poll, jitter::poll));
+
+        TerminalPosition latestDrag = new TerminalPosition(8, 6);
         Queue<KeyStroke> drag = new ArrayDeque<>(List.of(
                 new MouseAction(MouseActionType.DRAG, 1, TerminalPosition.TOP_LEFT_CORNER),
-                new MouseAction(MouseActionType.DRAG, 1, latest),
+                new MouseAction(MouseActionType.DRAG, 1, latestDrag),
                 new KeyStroke(KeyType.Tab)));
-        MouseAction.CoalescedInput dragBatch = MouseAction.coalesceQueued(drag.remove(), drag::poll);
-        assertEquals(latest, ((MouseAction) dragBatch.key()).getPosition());
-        assertNull(dragBatch.scrollDelta());
-        assertEquals(2, dragBatch.dragCount());
-        assertEquals(KeyType.Tab, dragBatch.nextKey().getKeyType());
+        InputCoalescer dragInput = new InputCoalescer();
+        MouseAction dragAction = (MouseAction) dragInput.next(drag::poll, drag::poll);
+        assertEquals(MouseActionType.DRAG, dragAction.getActionType());
+        assertEquals(latestDrag, dragAction.getPosition());
+        assertEquals(2, dragAction.getCount());
+        assertEquals(KeyType.Tab, dragInput.next(drag::poll, drag::poll).getKeyType());
+    }
+
+    @Test
+    public void wheelMomentumSmoothingLivesWithPointerInput() {
+        assertEquals(List.of(1, 1, 1, 1, 1), driveWheelStream(1, 1, 1, 1, 1));
+        assertEquals(List.of(3), driveWheelStream(3));
+        assertEquals(List.of(2), driveWheelStream(2, 0));
+        assertEquals(List.of(3, 2, 1, 1, 1, 1, 1),
+                driveWheelStream(3, 2, 1, 1, 1, -1, 1, -1, 1));
+        assertEquals(List.of(3, 3, -2), driveWheelStream(3, 3, -8));
+
+        MouseAction.WheelMomentum cancelled = MouseAction.mergeWheelDelta(3, -3);
+        assertEquals(0, cancelled.momentum());
+        assertNull(cancelled.delta());
+
+        int momentum = 0;
+        for (int index = 0; index < 20; index++) {
+            momentum = MouseAction.mergeWheelDelta(momentum, 1).momentum();
+        }
+        assertEquals(MouseAction.WHEEL_MOMENTUM_CAP, momentum);
+    }
+
+    @Test
+    public void wheelMomentumDecayUsesAnIdleTimeWindow() {
+        assertEquals(0, MouseAction.decayWheelMomentum(0, 999));
+        assertEquals(10, MouseAction.decayWheelMomentum(10, 0));
+        assertEquals(-10, MouseAction.decayWheelMomentum(-10, 0));
+        assertEquals(-1, MouseAction.decayWheelMomentum(-1, 100));
+        assertEquals(1, MouseAction.decayWheelMomentum(1, 149));
+        assertTrue(MouseAction.decayWheelMomentum(-12, 100) < 0);
+        assertTrue(Math.abs(MouseAction.decayWheelMomentum(12, 100))
+                < Math.abs(MouseAction.decayWheelMomentum(12, 20)));
+        assertEquals(0, MouseAction.decayWheelMomentum(12, MouseAction.WHEEL_MOMENTUM_HOLD_MILLIS));
+        assertEquals(0, MouseAction.decayWheelMomentum(-12, 99_999));
     }
 
     @Test
@@ -148,15 +197,40 @@ public class InputProtocolTest {
         return (MouseAction) matching.fullMatch;
     }
 
+    private static List<Integer> driveWheelStream(int... deltas) {
+        List<Integer> effective = new java.util.ArrayList<>();
+        int momentum = 0;
+        for (int delta : deltas) {
+            MouseAction.WheelMomentum merged = MouseAction.mergeWheelDelta(momentum, delta);
+            momentum = merged.momentum();
+            if (merged.delta() != null) effective.add(merged.delta());
+        }
+        return effective;
+    }
+
     private static void assertKey(
             String sequence, KeyType type, boolean ctrl, boolean alt, boolean shift) throws Exception {
+        assertKey(decode(sequence), type, ctrl, alt, shift);
+    }
+
+    private static void assertCharacterKey(
+            String sequence, char character, boolean ctrl, boolean alt, boolean shift) throws Exception {
+        KeyStroke key = decode(sequence);
+        assertKey(key, KeyType.Character, ctrl, alt, shift);
+        assertEquals(Character.valueOf(character), key.getCharacter());
+    }
+
+    private static KeyStroke decode(String sequence) throws Exception {
         InputDecoder decoder = new InputDecoder(new StringReader(sequence));
         decoder.addProfile(new DefaultKeyDecodingProfile());
-        KeyStroke key = decoder.getNextCharacter(true);
+        return decoder.getNextCharacter(true);
+    }
+
+    private static void assertKey(
+            KeyStroke key, KeyType type, boolean ctrl, boolean alt, boolean shift) {
         assertEquals(type, key.getKeyType());
         assertEquals(ctrl, key.isCtrlDown());
         assertEquals(alt, key.isAltDown());
         assertEquals(shift, key.isShiftDown());
-        if (type == KeyType.Character) assertEquals(Character.valueOf('h'), key.getCharacter());
     }
 }
