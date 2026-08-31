@@ -128,8 +128,15 @@ public class InputProtocolTest {
 
         Queue<KeyStroke> jitter = new ArrayDeque<>(List.of(
                 new MouseAction(MouseActionType.SCROLL_UP, 4, TerminalPosition.TOP_LEFT_CORNER),
+                new MouseAction(MouseActionType.SCROLL_DOWN, 5, TerminalPosition.TOP_LEFT_CORNER),
+                new KeyStroke('d', false, false)));
+        assertEquals(Character.valueOf('d'),
+                new InputCoalescer().next(jitter::poll, jitter::poll).getCharacter());
+
+        Queue<KeyStroke> balanced = new ArrayDeque<>(List.of(
+                new MouseAction(MouseActionType.SCROLL_UP, 4, TerminalPosition.TOP_LEFT_CORNER),
                 new MouseAction(MouseActionType.SCROLL_DOWN, 5, TerminalPosition.TOP_LEFT_CORNER)));
-        assertNull(new InputCoalescer().next(jitter::poll, jitter::poll));
+        assertNull(new InputCoalescer().next(balanced::poll, balanced::poll));
 
         TerminalPosition latestDrag = new TerminalPosition(8, 6);
         Queue<KeyStroke> drag = new ArrayDeque<>(List.of(

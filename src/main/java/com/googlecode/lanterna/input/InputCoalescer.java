@@ -43,14 +43,19 @@ public final class InputCoalescer {
         KeyStroke first = pending.pollFirst();
         if (first == null) first = nextInput.get();
 
-        MouseAction.CoalescedInput coalesced = MouseAction.coalesceQueued(
-                first,
-                () -> {
-                    KeyStroke retained = pending.pollFirst();
-                    return retained != null ? retained : queuedInput.get();
-                });
-        if (coalesced.nextKey() != null) pending.addFirst(coalesced.nextKey());
-        return coalesced.key();
+        while (true) {
+            MouseAction.CoalescedInput coalesced = MouseAction.coalesceQueued(
+                    first,
+                    () -> {
+                        KeyStroke retained = pending.pollFirst();
+                        return retained != null ? retained : queuedInput.get();
+                    });
+            if (coalesced.nextKey() != null) pending.addFirst(coalesced.nextKey());
+            if (coalesced.key() != null) return coalesced.key();
+
+            first = pending.pollFirst();
+            if (first == null) return null;
+        }
     }
 
     /**
