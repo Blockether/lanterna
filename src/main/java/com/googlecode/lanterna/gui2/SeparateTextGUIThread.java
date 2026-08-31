@@ -61,8 +61,8 @@ public class SeparateTextGUIThread extends AbstractTextGUIThread implements Asyn
 
     @Override
     public void start() {
-        textGUIThread.start();
         state = State.STARTED;
+        textGUIThread.start();
     }
 
     @Override
