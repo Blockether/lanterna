@@ -51,6 +51,10 @@ public enum KeyType {
     Tab,
     ReverseTab,
     Enter,
+    /** Beginning of a terminal bracketed-paste payload. */
+    PasteStart,
+    /** End of a terminal bracketed-paste payload. */
+    PasteEnd,
     F1,
     F2,
     F3,

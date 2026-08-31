@@ -74,8 +74,8 @@ public class ScrollBarUnitTest {
         assertNull(ScrollBar.dragStep(
                 mouse(MouseActionType.CLICK_DOWN, 29, 15, 1), Direction.VERTICAL, start,
                 20, 100, 20, 0, null, 1));
-        assertEquals(Integer.valueOf(-3), ScrollBar.wheelStep(mouse(MouseActionType.SCROLL_UP, 0, 0, 3)));
-        assertEquals(Integer.valueOf(5), ScrollBar.wheelStep(mouse(MouseActionType.SCROLL_DOWN, 0, 0, 5)));
+        assertEquals(Integer.valueOf(-3), ScrollBar.wheelStep(wheel(MouseActionType.SCROLL_UP, 4, 3)));
+        assertEquals(Integer.valueOf(5), ScrollBar.wheelStep(wheel(MouseActionType.SCROLL_DOWN, 5, 5)));
         assertNull(ScrollBar.wheelStep(new KeyStroke(KeyType.Enter)));
     }
 
@@ -107,5 +107,9 @@ public class ScrollBarUnitTest {
 
     private static MouseAction mouse(MouseActionType type, int column, int row, int button) {
         return new MouseAction(type, button, new TerminalPosition(column, row));
+    }
+
+    private static MouseAction wheel(MouseActionType type, int button, int count) {
+        return new MouseAction(type, button, TerminalPosition.TOP_LEFT_CORNER, count);
     }
 }

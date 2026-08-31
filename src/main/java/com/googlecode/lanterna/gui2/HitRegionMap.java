@@ -8,9 +8,14 @@
  */
 package com.googlecode.lanterna.gui2;
 
+import com.googlecode.lanterna.TerminalPosition;
+import com.googlecode.lanterna.TerminalRectangle;
+import com.googlecode.lanterna.input.MouseAction;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Function;
 
 /**
  * Double-buffered hit map for controls painted directly into a text graphics surface.
@@ -20,18 +25,23 @@ import java.util.Objects;
  * Rectangles are half-open and lookup scans in reverse paint order so the last painted value wins.</p>
  */
 public final class HitRegionMap<T> {
-    private record Region<T>(int column, int row, int width, int height, T value) {
-        private boolean contains(int pointerColumn, int pointerRow) {
-            return pointerColumn >= column
-                    && (long) pointerColumn < (long) column + width
-                    && pointerRow >= row
-                    && (long) pointerRow < (long) row + height;
-        }
+    private record Region<T>(TerminalRectangle bounds, T value) {
     }
 
+    private final Function<? super T, TerminalRectangle> boundsExtractor;
     private volatile List<Region<T>> published = List.of();
     private List<Region<T>> staging = new ArrayList<>();
     private volatile T hovered;
+
+    /** Creates a map whose values are registered with explicit bounds. */
+    public HitRegionMap() {
+        this.boundsExtractor = null;
+    }
+
+    /** Creates a map that can derive bounds when {@link #register(Object)} is called. */
+    public HitRegionMap(Function<? super T, TerminalRectangle> boundsExtractor) {
+        this.boundsExtractor = Objects.requireNonNull(boundsExtractor, "boundsExtractor");
+    }
 
     /** Starts a paint pass without disturbing the currently published frame. */
     public synchronized void beginFrame() {
@@ -40,10 +50,24 @@ public final class HitRegionMap<T> {
 
     /** Stages a rectangular value in paint order. */
     public synchronized void register(int column, int row, int width, int height, T value) {
-        if (width <= 0 || height <= 0) {
+        register(new TerminalRectangle(column, row, width, height), value);
+    }
+
+    /** Stages a value with explicit bounds in paint order. */
+    public synchronized void register(TerminalRectangle bounds, T value) {
+        Objects.requireNonNull(bounds, "bounds");
+        if (bounds.width <= 0 || bounds.height <= 0) {
             throw new IllegalArgumentException("Hit region width and height must be positive");
         }
-        staging.add(new Region<>(column, row, width, height, Objects.requireNonNull(value, "value")));
+        staging.add(new Region<>(bounds, Objects.requireNonNull(value, "value")));
+    }
+
+    /** Stages a value using the bounds extractor supplied to the constructor. */
+    public synchronized void register(T value) {
+        if (boundsExtractor == null) {
+            throw new IllegalStateException("HitRegionMap has no bounds extractor");
+        }
+        register(Objects.requireNonNull(boundsExtractor.apply(value), "extracted bounds"), value);
     }
 
     /** Publishes the complete staged frame in one atomic assignment. */
@@ -71,9 +95,21 @@ public final class HitRegionMap<T> {
         List<Region<T>> snapshot = published;
         for (int index = snapshot.size() - 1; index >= 0; index--) {
             Region<T> region = snapshot.get(index);
-            if (region.contains(column, row)) return region.value();
+            if (region.bounds().contains(column, row)) return region.value();
         }
         return null;
+    }
+
+    /** Returns the topmost value under a terminal position, or {@code null}. */
+    public T lookup(TerminalPosition position) {
+        Objects.requireNonNull(position, "position");
+        return lookup(position.getColumn(), position.getRow());
+    }
+
+    /** Returns the topmost value under a mouse action, or {@code null}. */
+    public T lookup(MouseAction action) {
+        Objects.requireNonNull(action, "action");
+        return lookup(action.getPosition());
     }
 
     public T hovered() {
@@ -85,5 +121,10 @@ public final class HitRegionMap<T> {
         if (Objects.equals(hovered, value)) return false;
         hovered = value;
         return true;
+    }
+
+    /** Looks up a mouse action, updates hover and reports whether it changed. */
+    public boolean updateHovered(MouseAction action) {
+        return setHovered(lookup(action));
     }
 }

@@ -35,7 +35,7 @@ public class InputDecoder {
     private final List<CharacterPattern> bytePatterns;
     private final List<Character> currentMatching;
     private boolean seenEOF;
-    private int timeoutUnits;
+    private int timeoutMillis;
 
     /**
      * Creates a new input decoder using a specified Reader as the source to read characters from
@@ -46,7 +46,7 @@ public class InputDecoder {
         this.bytePatterns = new ArrayList<>();
         this.currentMatching = new ArrayList<>();
         this.seenEOF = false;
-        this.timeoutUnits = 0; // default is no wait at all
+        this.timeoutMillis = 50;
     }
 
     /**
@@ -86,24 +86,25 @@ public class InputDecoder {
     }
 
     /**
-     * Sets the number of 1/4-second units for how long to try to get further input
-     * to complete an escape-sequence for a special Key.
-     * 
-     * Negative numbers are mapped to 0 (no wait at all), and unreasonably high
-     * values are mapped to a maximum of 240 (1 minute).
-     * @param units New timeout to use, in 250ms units
+     * Sets how long an ambiguous escape prefix waits for the rest of its control sequence.
+     * A small non-zero default keeps split mouse and paste reports atomic without making Escape feel delayed.
      */
-    public void setTimeoutUnits(int units) {
-        timeoutUnits = (units < 0) ? 0 :
-                       (units > 240) ? 240 :
-                        units;
+    public void setEscapeSequenceTimeoutMillis(int millis) {
+        timeoutMillis = Math.max(0, Math.min(60_000, millis));
     }
-    /**
-     * queries the current timeoutUnits value. One unit is 1/4 second.
-     * @return The timeout this InputDecoder will use when waiting for additional input, in units of 1/4 seconds
-     */
+
+    public int getEscapeSequenceTimeoutMillis() {
+        return timeoutMillis;
+    }
+
+    /** Sets the legacy timeout in quarter-second units. */
+    public void setTimeoutUnits(int units) {
+        setEscapeSequenceTimeoutMillis(Math.max(0, Math.min(240, units)) * 250);
+    }
+
+    /** Returns the legacy timeout rounded up to quarter-second units. */
     public int getTimeoutUnits() {
-        return timeoutUnits;
+        return (timeoutMillis + 249) / 250;
     }
 
     /**
@@ -130,11 +131,15 @@ public class InputDecoder {
                 // It would be much better, if we could just read with a timeout,
                 //   but lacking that, we wait 1/4s units and check for readiness.
                 if (bestMatch != null) {
-                    int timeout = getTimeoutUnits();
-                    while (timeout > 0 && ! source.ready() ) {
+                    long deadline = System.nanoTime() + timeoutMillis * 1_000_000L;
+                    while (!source.ready() && System.nanoTime() < deadline) {
                         try {
-                            timeout--; Thread.sleep(250);
-                        } catch (InterruptedException e) { timeout = 0; }
+                            Thread.sleep(1);
+                        }
+                        catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            break;
+                        }
                     }
                 }
                 // if input is available, we can just read a char without waiting,

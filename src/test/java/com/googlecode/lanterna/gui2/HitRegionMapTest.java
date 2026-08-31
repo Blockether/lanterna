@@ -62,4 +62,21 @@ public class HitRegionMapTest {
         assertThrows(IllegalArgumentException.class, () -> regions.register(0, 0, 1, 0, "item"));
         assertThrows(NullPointerException.class, () -> regions.register(0, 0, 1, 1, null));
     }
+    @Test
+    public void extractedRectanglesAndMouseActionsNeedNoApplicationHitTesting() {
+        record Item(com.googlecode.lanterna.TerminalRectangle bounds, String name) {}
+        HitRegionMap<Item> regions = new HitRegionMap<>(Item::bounds);
+        Item item = new Item(new com.googlecode.lanterna.TerminalRectangle(4, 5, 3, 2), "item");
+        regions.beginFrame();
+        regions.register(item);
+        regions.commitFrame();
+
+        com.googlecode.lanterna.input.MouseAction mouse = new com.googlecode.lanterna.input.MouseAction(
+                com.googlecode.lanterna.input.MouseActionType.MOVE, 0,
+                new com.googlecode.lanterna.TerminalPosition(6, 6));
+        assertEquals(item, regions.lookup(mouse));
+        assertTrue(regions.updateHovered(mouse));
+        assertEquals(item, regions.hovered());
+        assertFalse(regions.updateHovered(mouse));
+    }
 }

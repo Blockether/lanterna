@@ -20,6 +20,9 @@ package com.googlecode.lanterna.input;
 
 import com.googlecode.lanterna.TerminalPosition;
 
+import java.util.Objects;
+import java.util.function.Supplier;
+
 /**
  * MouseAction, a KeyStroke in disguise, this class contains the information of a single mouse action event.
  */
@@ -27,6 +30,11 @@ public class MouseAction extends KeyStroke {
     private final MouseActionType actionType;
     private final int button;
     private final TerminalPosition position;
+    private final int count;
+
+    /** A queued pointer batch plus the first non-pointer event consumed while draining it. */
+    public record CoalescedInput(KeyStroke key, Long scrollDelta, int dragCount, KeyStroke nextKey) {
+    }
 
     /**
      * Constructs a MouseAction based on an action type, a button and a location on the screen
@@ -36,10 +44,20 @@ public class MouseAction extends KeyStroke {
      * @param position Where in the terminal is the mouse cursor located
      */
     public MouseAction(MouseActionType actionType, int button, TerminalPosition position) {
+        this(actionType, button, position, 1);
+    }
+
+    /**
+     * Constructs a mouse event with an explicit coalesced event count.
+     * Button identity and count are separate: wheel buttons remain 4/5 even when several events are merged.
+     */
+    public MouseAction(MouseActionType actionType, int button, TerminalPosition position, int count) {
         super(KeyType.MouseEvent, false, false);
-        this.actionType = actionType;
+        if (count <= 0) throw new IllegalArgumentException("MouseAction count must be positive: " + count);
+        this.actionType = Objects.requireNonNull(actionType, "actionType");
         this.button = button;
-        this.position = position;
+        this.position = Objects.requireNonNull(position, "position");
+        this.count = count;
     }
 
     /**
@@ -74,6 +92,63 @@ public class MouseAction extends KeyStroke {
     public TerminalPosition getPosition() {
         return position;
     }
+
+    /** Returns how many equivalent input events were coalesced into this action. */
+    public int getCount() {
+        return count;
+    }
+
+    /** Returns signed wheel steps, or zero when this is not a wheel action. */
+    public int getScrollDelta() {
+        if (actionType == MouseActionType.SCROLL_UP) return -count;
+        if (actionType == MouseActionType.SCROLL_DOWN) return count;
+        return 0;
+    }
+
+    /**
+     * Coalesces consecutive queued wheel or drag events. Wheel counts are summed, while drag input keeps the latest
+     * pointer position and reports how many events were consumed. The first different event is returned for replay.
+     */
+    public static CoalescedInput coalesceQueued(
+            KeyStroke first, Supplier<? extends KeyStroke> pollNext) {
+        Objects.requireNonNull(pollNext, "pollNext");
+        if (!(first instanceof MouseAction firstMouse)) {
+            return new CoalescedInput(first, null, 1, null);
+        }
+
+        int firstScroll = firstMouse.getScrollDelta();
+        if (firstScroll != 0) {
+            long scroll = firstScroll;
+            KeyStroke next = null;
+            while ((next = pollNext.get()) != null) {
+                if (next instanceof MouseAction mouse && mouse.getScrollDelta() != 0) {
+                    scroll += mouse.getScrollDelta();
+                }
+                else {
+                    break;
+                }
+            }
+            return new CoalescedInput(first, scroll == 0 ? null : scroll, 1, next);
+        }
+
+        if (firstMouse.getActionType() == MouseActionType.DRAG) {
+            MouseAction latest = firstMouse;
+            int dragCount = firstMouse.getCount();
+            KeyStroke next;
+            while ((next = pollNext.get()) != null) {
+                if (next instanceof MouseAction mouse && mouse.getActionType() == MouseActionType.DRAG) {
+                    latest = mouse;
+                    dragCount += mouse.getCount();
+                }
+                else {
+                    return new CoalescedInput(latest, null, dragCount, next);
+                }
+            }
+            return new CoalescedInput(latest, null, dragCount, null);
+        }
+
+        return new CoalescedInput(first, null, 1, null);
+    }
     
     public boolean isMouseDown() {
         return actionType == MouseActionType.CLICK_DOWN;
@@ -93,6 +168,6 @@ public class MouseAction extends KeyStroke {
 
     @Override
     public String toString() {
-        return "MouseAction{actionType=" + actionType + ", button=" + button + ", position=" + position + '}';
+        return "MouseAction{actionType=" + actionType + ", button=" + button + ", position=" + position + ", count=" + count + '}';
     }
 }

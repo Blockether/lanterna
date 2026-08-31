@@ -244,22 +244,11 @@ public class ScrollBar extends AbstractInteractableComponent<ScrollBar> {
         return new Geometry(thumbOffset, 1, maximumPosition, trackSize);
     }
 
-    /** Returns -count for wheel-up, +count for wheel-down, otherwise {@code null}. */
+    /** Returns signed coalesced wheel steps, otherwise {@code null}. */
     public static Integer wheelStep(KeyStroke event) {
-        if (!(event instanceof MouseAction mouse)) {
-            return null;
-        }
-        int direction;
-        if (mouse.getActionType() == MouseActionType.SCROLL_UP) {
-            direction = -1;
-        }
-        else if (mouse.getActionType() == MouseActionType.SCROLL_DOWN) {
-            direction = 1;
-        }
-        else {
-            return null;
-        }
-        return direction * Math.max(1, mouse.getButton());
+        if (!(event instanceof MouseAction mouse)) return null;
+        int delta = mouse.getScrollDelta();
+        return delta == 0 ? null : delta;
     }
 
     /** Tests the track with a cross-axis band extending left/up from the painted cell. */

@@ -90,15 +90,30 @@ public class TerminalRectangle {
         return new TerminalRectangle(x, y, width, rows);
     }
 
+    /** Returns true when {@code p} is inside this half-open rectangle. */
+    public boolean contains(TerminalPosition p) {
+        return p != null && contains(p.getColumn(), p.getRow());
+    }
+
+    /** Returns true when the point is inside this half-open rectangle. */
+    public boolean contains(int x, int y) {
+        return this.x <= x && (long) x < (long) this.x + width
+                && this.y <= y && (long) y < (long) this.y + height;
+    }
+
+    /** Returns the point relative to this rectangle, or {@code null} when outside. */
+    public TerminalPosition relativePosition(TerminalPosition p) {
+        return contains(p) ? new TerminalPosition(p.getColumn() - x, p.getRow() - y) : null;
+    }
+
     public boolean whenContains(TerminalPosition p, Runnable op) {
         return whenContains(p.getColumn(), p.getRow(), op);
     }
+
     public boolean whenContains(int x, int y, Runnable op) {
-        if (this.x <= x && x < this.xAndWidth && this.y <= y && y < this.yAndHeight) {
-            op.run();
-            return true;
-        }
-        return false;
+        if (!contains(x, y)) return false;
+        op.run();
+        return true;
     }
 
 

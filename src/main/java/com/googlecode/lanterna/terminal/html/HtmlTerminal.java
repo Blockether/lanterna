@@ -251,8 +251,6 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
             frameMonitor.notifyAll();
         }
     }
-
-
     private void addBrowserInput(Map<String, String> form) {
         String kind = form.get("kind");
         if ("text".equals(kind)) {
@@ -260,6 +258,9 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
             for (int index = 0; index < text.length(); index++) {
                 addInput(new KeyStroke(text.charAt(index), false, false, false));
             }
+        }
+        else if ("paste".equals(kind)) {
+            addBrowserPaste(form.getOrDefault("text", ""));
         }
         else if ("key".equals(kind)) {
             KeyStroke keyStroke = browserKey(form);
@@ -276,6 +277,27 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
             catch (IllegalArgumentException ignored) {
             }
         }
+    }
+
+    private void addBrowserPaste(String text) {
+        addInput(new KeyStroke(KeyType.PasteStart));
+        for (int index = 0; index < text.length(); index++) {
+            char character = text.charAt(index);
+            if (character == '\r') {
+                if (index + 1 < text.length() && text.charAt(index + 1) == '\n') index++;
+                addInput(new KeyStroke(KeyType.Enter));
+            }
+            else if (character == '\n') {
+                addInput(new KeyStroke(KeyType.Enter));
+            }
+            else if (character == '\t') {
+                addInput(new KeyStroke(KeyType.Tab));
+            }
+            else {
+                addInput(new KeyStroke(character, false, false, false));
+            }
+        }
+        addInput(new KeyStroke(KeyType.PasteEnd));
     }
 
     private static KeyStroke browserKey(Map<String, String> form) {

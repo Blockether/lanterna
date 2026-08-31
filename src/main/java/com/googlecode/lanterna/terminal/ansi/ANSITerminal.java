@@ -30,7 +30,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
 
 /**
  * Class containing graphics code for ANSI compliant text terminals and terminal emulators. All the methods inside of
@@ -220,6 +219,7 @@ public abstract class ANSITerminal extends StreamBasedTerminal implements Extend
             throw new IllegalStateException("Cannot call enterPrivateMode() when already in private mode");
         }
         writeCSISequenceToTerminal((byte) '?', (byte) '1', (byte) '0', (byte) '4', (byte) '9', (byte) 'h');
+        writeCSISequenceToTerminal((byte) '?', (byte) '2', (byte) '0', (byte) '0', (byte) '4', (byte) 'h');
         if (requestedMouseCaptureMode != null) {
             this.mouseCaptureMode = requestedMouseCaptureMode;
             updateMouseCaptureMode(this.mouseCaptureMode, 'h');
@@ -235,11 +235,12 @@ public abstract class ANSITerminal extends StreamBasedTerminal implements Extend
         }
         resetColorAndSGR();
         setCursorVisible(true);
-        writeCSISequenceToTerminal((byte) '?', (byte) '1', (byte) '0', (byte) '4', (byte) '9', (byte) 'l');
         if (null != mouseCaptureMode) {
             updateMouseCaptureMode(this.mouseCaptureMode, 'l');
             this.mouseCaptureMode = null;
         }
+        writeCSISequenceToTerminal((byte) '?', (byte) '2', (byte) '0', (byte) '0', (byte) '4', (byte) 'l');
+        writeCSISequenceToTerminal((byte) '?', (byte) '1', (byte) '0', (byte) '4', (byte) '9', (byte) 'l');
         flush();
         inPrivateMode = false;
     }
@@ -373,9 +374,7 @@ public abstract class ANSITerminal extends StreamBasedTerminal implements Extend
             writeCSISequenceToTerminal((byte)'?', (byte)'1', (byte)'0', (byte)'0', (byte)'3', (byte)l_or_h);
             break;
         }
-        if(getCharset().equals(StandardCharsets.UTF_8)) {
-            writeCSISequenceToTerminal((byte)'?', (byte)'1', (byte)'0', (byte)'0', (byte)'5', (byte)l_or_h);
-        }
+        writeCSISequenceToTerminal((byte)'?', (byte)'1', (byte)'0', (byte)'0', (byte)'6', (byte)l_or_h);
     }
 
     @Override

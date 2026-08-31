@@ -49,13 +49,24 @@ public class HtmlTerminalTest {
     }
 
     @Test
-    public void browserTextKeysMouseAndResizeBecomeOrdinaryTerminalEvents() throws Exception {
+    public void browserTextPasteKeysMouseAndResizeBecomeOrdinaryTerminalEvents() throws Exception {
         try (HtmlTerminal terminal = terminal(new TerminalSize(10, 4))) {
             terminal.submitBrowserInput(Map.of("kind", "text", "text", "Zaż"));
             assertEquals(Character.valueOf('Z'), terminal.readInput().getCharacter());
             assertEquals(Character.valueOf('a'), terminal.readInput().getCharacter());
             assertEquals(Character.valueOf('ż'), terminal.readInput().getCharacter());
 
+            terminal.submitBrowserInput(Map.of("kind", "paste", "text", "one\r\ntwo\t"));
+            assertEquals(KeyType.PasteStart, terminal.readInput().getKeyType());
+            assertEquals("o", terminal.readInput().getText());
+            assertEquals("n", terminal.readInput().getText());
+            assertEquals("e", terminal.readInput().getText());
+            assertEquals("\n", terminal.readInput().getText());
+            assertEquals("t", terminal.readInput().getText());
+            assertEquals("w", terminal.readInput().getText());
+            assertEquals("o", terminal.readInput().getText());
+            assertEquals("\t", terminal.readInput().getText());
+            assertEquals(KeyType.PasteEnd, terminal.readInput().getKeyType());
             terminal.submitBrowserInput(Map.of(
                     "kind", "key",
                     "key", "ArrowDown",

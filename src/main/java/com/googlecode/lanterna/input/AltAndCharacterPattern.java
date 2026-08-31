@@ -36,10 +36,17 @@ public class AltAndCharacterPattern implements CharacterPattern {
         if (size == 1) {
             return Matching.NOT_YET; // maybe later
         }
-        if ( Character.isISOControl(seq.get(1)) ) {
-            return null; // nope
+        char character = seq.get(1);
+        if (character == '\n' || character == '\r') {
+            return new Matching(new KeyStroke(KeyType.Enter, false, true));
         }
-        KeyStroke ks = new KeyStroke(seq.get(1), false, true);
-        return new Matching( ks ); // yep
+        if (character == 0x7f || character == 0x08) {
+            return new Matching(new KeyStroke(KeyType.Backspace, false, true));
+        }
+        if (character == '\t') {
+            return new Matching(new KeyStroke(KeyType.Tab, false, true));
+        }
+        if (Character.isISOControl(character)) return null;
+        return new Matching(new KeyStroke(character, false, true));
     }
 }

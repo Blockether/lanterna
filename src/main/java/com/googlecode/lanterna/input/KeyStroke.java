@@ -157,6 +157,14 @@ public class KeyStroke {
         return character;
     }
 
+    /** Returns text contributed inside a paste, or {@code null} for non-text keys. */
+    public String getText() {
+        if (keyType == KeyType.Character || keyType == KeyType.Enter || keyType == KeyType.Tab) {
+            return character.toString();
+        }
+        return null;
+    }
+
     /**
      * @return Returns true if ctrl was help down while the key was typed (depending on terminal implementation)
      */
