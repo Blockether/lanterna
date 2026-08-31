@@ -47,7 +47,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * <p>Use this class anywhere a {@link Terminal} is accepted, including
  * {@code TerminalScreen} and GUI2. The owning application serves the rendered
  * document and SSE fragments through its own HTTP stack, then forwards browser
- * resize, keyboard, paste, mouse and wheel events through this terminal.
+ * resize, keyboard, paste, mouse and wheel events through this terminal. An
+ * authenticated parent can carry the same protocol for a sandboxed child.
  * {@link #renderHtml()} exports the current frame as one portable HTML file.</p>
  */
 public final class HtmlTerminal extends DefaultVirtualTerminal {
@@ -137,6 +138,15 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
     public String renderLiveHtml(String endpointPrefix) {
         return HtmlTerminalRenderer.renderLiveDocument(
                 snapshot(), title, endpointPrefix, "", minColumns, maxColumns, minRows, maxRows, browserResize);
+    }
+
+    /**
+     * A live SSR document whose authenticated parent carries frames, input and resize.
+     * The bridge identifier correlates messages and is not an authorization credential.
+     */
+    public String renderBridgeHtml(String bridgeId) {
+        return HtmlTerminalRenderer.renderBridgeDocument(
+                snapshot(), title, bridgeId, minColumns, maxColumns, minRows, maxRows, browserResize);
     }
 
     /** Wait for a newer frame, or return the current frame when the timeout expires. */

@@ -24,6 +24,9 @@
 - Preserve unchanged image, video and audio elements across paints, replace media
   when its rendered source changes, and resynchronize browser geometry when an SSE
   stream reconnects to a fresh terminal.
+- Add `renderBridgeHtml` for authenticated parent-window transports. It uses the same
+  server-rendered fragments and input protocol without putting a credential or endpoint
+  inside a sandboxed child, and guards pointer capture for iOS WebViews.
 
 ### `3.1.5-vis.43`
 

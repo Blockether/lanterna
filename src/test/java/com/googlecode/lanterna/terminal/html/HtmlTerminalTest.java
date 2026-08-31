@@ -31,10 +31,16 @@ public class HtmlTerminalTest {
             String page = terminal.renderLiveHtml("/terminal");
             assertTrue(page.contains("data-endpoint-prefix=\"/terminal\""));
             assertTrue(page.contains("data-live=\"true\""));
+            assertTrue(page.contains("data-transport=\"http\""));
             assertTrue(page.contains("data-resizable=\"true\""));
             assertTrue(page.contains(">Z</span>"));
             assertFalse(page.contains("application/json"));
             assertFalse(page.contains("__LANTERNA_"));
+
+            String bridge = terminal.renderBridgeHtml("companion-frame");
+            assertTrue(bridge.contains("data-bridge-id=\"companion-frame\""));
+            assertTrue(bridge.contains("data-transport=\"parent\""));
+            assertTrue(bridge.contains(">Z</span>"));
 
             String frame = terminal.renderFrameHtml();
             assertTrue(frame.startsWith("<div class=\"frame\""));

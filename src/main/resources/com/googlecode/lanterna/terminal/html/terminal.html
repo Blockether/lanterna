@@ -11,7 +11,7 @@ html, body { width: 100%; height: 100%; margin: 0; background: var(--paper); col
 body { overflow: hidden; }
 #viewport { position: fixed; inset: 0; overflow: auto; padding: var(--row-h) var(--cell-w); background: var(--paper); }
 #terminal, #probe { font: 14px/18px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-variant-ligatures: none; }
-#terminal { position: relative; display: grid; width: max-content; height: max-content; outline: none; user-select: none; cursor: default; }
+#terminal { position: relative; display: grid; width: max-content; height: max-content; outline: none; user-select: none; cursor: default; touch-action: manipulation; }
 .frame, #cells, #media-layer { display: contents; }
 #terminal.focused { outline: 1px solid var(--ink); outline-offset: 2px; }
 #terminal.inspect { background-image: linear-gradient(to right, color-mix(in srgb, var(--ink) 12%, transparent) 1px, transparent 1px), linear-gradient(to bottom, color-mix(in srgb, var(--ink) 12%, transparent) 1px, transparent 1px); background-size: var(--cell-w) var(--row-h); }
@@ -45,14 +45,23 @@ __LANTERNA_BODY__
   const viewport = document.getElementById('viewport');
   const probe = document.getElementById('probe');
   const template = document.getElementById('patch');
-  const live = body.dataset.live === 'true';
+  const transport = body.dataset.transport;
+  const bridge = body.dataset.bridgeId;
+  const live = transport !== 'static';
   const resizable = body.dataset.resizable === 'true';
   const endpoint = path => `${body.dataset.endpointPrefix}${path}${body.dataset.endpointQuery}`;
-  const post = (path, values) => fetch(endpoint(path), {
-    method: 'POST',
-    headers: {'content-type': 'application/x-www-form-urlencoded;charset=UTF-8'},
-    body: new URLSearchParams(values)
-  });
+  const bridgeMessage = (type, payload = {}) => window.parent.postMessage({type, bridge, ...payload}, '*');
+  const post = (path, values) => {
+    if (transport === 'parent') {
+      bridgeMessage('lanterna.terminal.post', {path, values});
+      return Promise.resolve();
+    }
+    return fetch(endpoint(path), {
+      method: 'POST',
+      headers: {'content-type': 'application/x-www-form-urlencoded;charset=UTF-8'},
+      body: new URLSearchParams(values)
+    });
+  };
   let frame = terminal.querySelector('.frame');
   let columns = Number(frame.dataset.cols);
   let rows = Number(frame.dataset.rows);
@@ -82,13 +91,10 @@ __LANTERNA_BODY__
     terminal.style.gridTemplateRows = `repeat(${rows}, var(--row-h))`;
   }
 
-  function receive(event) {
-    template.innerHTML = event.data;
+  function receive(html) {
+    template.innerHTML = html;
     const next = template.content.firstElementChild;
-    if (next) {
-      apply(next);
-      resizeToViewport();
-    }
+    if (next) apply(next);
   }
 
   function measure() {
@@ -174,7 +180,7 @@ __LANTERNA_BODY__
     if (!live || event.target.closest('.media')) return;
     event.preventDefault();
     input.focus({preventScroll: true});
-    terminal.setPointerCapture(event.pointerId);
+    try { terminal.setPointerCapture(event.pointerId); } catch (_) {}
     mouse('CLICK_DOWN', event, event.button + 1);
   });
   terminal.addEventListener('pointerup', event => {
@@ -207,15 +213,26 @@ __LANTERNA_BODY__
     if (live) input.focus({preventScroll: true});
   });
   if (resizable) new ResizeObserver(requestResize).observe(viewport);
-  if (live) {
+  if (transport === 'http') {
     const eventUrl = endpoint('/events');
     const separator = eventUrl.includes('?') ? '&' : '?';
     const stream = new EventSource(`${eventUrl}${separator}after=${frame.dataset.version}`);
-    stream.addEventListener('frame', receive);
-    stream.addEventListener('open', () => { document.title = document.title.replace(/ — disconnected$/, ''); });
+    stream.addEventListener('frame', event => receive(event.data));
+    stream.addEventListener('open', () => {
+      requestResize();
+      document.title = document.title.replace(/ — disconnected$/, '');
+    });
     stream.addEventListener('error', () => {
       if (!document.title.endsWith(' — disconnected')) document.title += ' — disconnected';
     });
+  } else if (transport === 'parent') {
+    window.addEventListener('message', event => {
+      const data = event.data;
+      if (event.source !== window.parent || !data || typeof data !== 'object' || data.bridge !== bridge) return;
+      if (data.type === 'lanterna.terminal.frame' && typeof data.html === 'string') receive(data.html);
+      if (data.type === 'lanterna.terminal.resync') requestResize();
+    });
+    bridgeMessage('lanterna.terminal.ready', {after: Number(frame.dataset.version)});
   }
 })();
 </script>

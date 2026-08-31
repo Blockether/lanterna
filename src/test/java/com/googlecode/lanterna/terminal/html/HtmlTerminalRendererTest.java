@@ -147,6 +147,8 @@ public class HtmlTerminalRendererTest {
         assertTrue(html.startsWith("<!doctype html>"));
         assertTrue(html.contains("&lt;review &amp; verify&gt;"));
         assertTrue(html.contains(fragment));
+        assertTrue(html.contains("data-lanterna-terminal=\"true\""));
+        assertTrue(html.contains("data-transport=\"static\""));
         assertTrue(html.contains("data-live=\"false\""));
         assertFalse(html.contains("application/json"));
         assertFalse(html.contains("response.json()"));
@@ -168,11 +170,41 @@ public class HtmlTerminalRendererTest {
         assertTrue(html.contains("after=${frame.dataset.version}"));
         assertTrue(html.contains("post('/input'"));
         assertTrue(html.contains("post('/resize'"));
-        assertTrue(html.contains("template.innerHTML = event.data"));
-        assertTrue(html.contains("resizeToViewport();"));
+        assertTrue(html.contains("template.innerHTML = html"));
+        // Regression, issue b30f87ac-f20e-4d7f-9fd2-416788d10527: two differently sized
+        // viewers reasserted their dimensions after every frame and created a resize storm.
+        assertFalse(html.contains("apply(next);\n      resizeToViewport();"));
+        assertTrue(html.contains("stream.addEventListener('open', () => {\n      requestResize();"));
         assertTrue(html.contains(
                 "if (current && current.outerHTML === replacement.outerHTML) replacement.replaceWith(current);"));
         assertFalse(html.contains("/frame"));
+    }
+
+    @Test
+    public void parentDocumentUsesTheSameInputAndFrameLogicWithoutOwningHttp() {
+        DefaultVirtualTerminal terminal = new DefaultVirtualTerminal(new TerminalSize(24, 8));
+        terminal.putCharacter('B');
+        HtmlTerminalRenderer.Frame frame = HtmlTerminalRenderer.snapshot(terminal, 7);
+
+        String html = HtmlTerminalRenderer.renderBridgeDocument(
+                frame, "Bridge", "phone-review", 20, 400, 8, 200, true);
+
+        assertTrue(html.contains("data-lanterna-terminal=\"true\""));
+        assertTrue(html.contains("data-transport=\"parent\""));
+        assertTrue(html.contains("data-bridge-id=\"phone-review\""));
+        assertTrue(html.contains("window.parent.postMessage"));
+        assertTrue(html.contains("event.source !== window.parent"));
+        assertTrue(html.contains("lanterna.terminal.ready"));
+        assertTrue(html.contains("lanterna.terminal.post"));
+        assertTrue(html.contains("lanterna.terminal.frame"));
+        assertTrue(html.contains("lanterna.terminal.resync"));
+        assertTrue(html.contains("post('/input'"));
+        assertTrue(html.contains("post('/resize'"));
+        assertTrue(html.contains("try { terminal.setPointerCapture(event.pointerId); } catch (_) {}"));
+        assertTrue(html.contains("touch-action: manipulation"));
+        assertTrue(html.contains("if (transport === 'parent')"));
+        assertTrue(html.contains("if (transport === 'http')"));
+        assertTrue(html.contains("data-endpoint-prefix=\"\""));
     }
 
     @Test

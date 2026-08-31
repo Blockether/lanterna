@@ -64,6 +64,14 @@ active audio or video does not restart when unrelated cells change. A media item
 whose rendered attributes or bytes change is replaced, so a new image, audio source
 or video source takes effect.
 
+An application that must keep credentials out of a sandboxed child can instead call
+`renderBridgeHtml(bridgeId)`. That document sends the same input and resize forms to
+its authenticated parent with `postMessage`; the parent serves the existing SSE
+fragments back to the child. Both sides verify the bridge identifier, and the child
+also verifies the parent window. The identifier correlates messages but is not an
+authorization secret. Mobile pointer capture is best-effort so an iOS WebView that
+refuses capture still delivers the original tap.
+
 ## One component or painted view
 
 `HtmlTerminalView` is the short path for component development:

@@ -283,7 +283,7 @@ public final class HtmlTerminalRenderer {
 
     /** Build a static, portable HTML document containing this exact frame. */
     public static String renderDocument(Frame frame, String title) {
-        return renderTemplate(frame, title, false, "", "", 1, 1000, 1, 1000, false);
+        return renderTemplate(frame, title, "static", "", "", "", 1, 1000, 1, 1000, false);
     }
 
     public static String renderDocument(VirtualTerminal terminal, String title) {
@@ -303,9 +303,34 @@ public final class HtmlTerminalRenderer {
         return renderTemplate(
                 frame,
                 title,
-                true,
+                "http",
                 normalizePrefix(endpointPrefix),
                 endpointQuery == null ? "" : endpointQuery,
+                "",
+                minColumns,
+                maxColumns,
+                minRows,
+                maxRows,
+                browserResize);
+    }
+
+    static String renderBridgeDocument(
+            Frame frame,
+            String title,
+            String bridgeId,
+            int minColumns,
+            int maxColumns,
+            int minRows,
+            int maxRows,
+            boolean browserResize) {
+        if (bridgeId == null || bridgeId.isBlank()) throw new IllegalArgumentException("bridge id must not be blank");
+        return renderTemplate(
+                frame,
+                title,
+                "parent",
+                "",
+                "",
+                bridgeId,
                 minColumns,
                 maxColumns,
                 minRows,
@@ -316,20 +341,24 @@ public final class HtmlTerminalRenderer {
     private static String renderTemplate(
             Frame frame,
             String title,
-            boolean live,
+            String transport,
             String endpointPrefix,
             String endpointQuery,
+            String bridgeId,
             int minColumns,
             int maxColumns,
             int minRows,
             int maxRows,
             boolean browserResize) {
         Objects.requireNonNull(frame, "frame");
+        boolean live = !"static".equals(transport);
         String safeTitle = title == null || title.isBlank() ? "Lanterna terminal" : title;
         StringBuilder body = new StringBuilder(Math.max(512, frame.runs().size() * 160));
-        body.append("<body data-live=\"").append(live)
+        body.append("<body data-lanterna-terminal=\"true\" data-transport=\"").append(transport)
+                .append("\" data-live=\"").append(live)
                 .append("\" data-endpoint-prefix=\"").append(escapeHtml(endpointPrefix))
                 .append("\" data-endpoint-query=\"").append(escapeHtml(endpointQuery))
+                .append("\" data-bridge-id=\"").append(escapeHtml(bridgeId))
                 .append("\" data-resizable=\"").append(browserResize)
                 .append("\" data-min-cols=\"").append(minColumns)
                 .append("\" data-max-cols=\"").append(maxColumns)
