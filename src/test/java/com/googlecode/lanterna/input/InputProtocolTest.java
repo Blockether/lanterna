@@ -41,7 +41,10 @@ public class InputProtocolTest {
     }
 
     @Test
-    public void defaultProfileOwnsModifiedKeysAndBracketedPasteMarkers() throws Exception {
+    public void defaultProfileOwnsTerminalControlKeysAndBracketedPasteMarkers() throws Exception {
+        assertKey("\n", KeyType.Enter, false, false, false);
+        assertKey("\r", KeyType.Enter, false, false, false);
+        assertKey("\r\0", KeyType.Enter, false, false, false);
         assertKey("\u001b\n", KeyType.Enter, false, true, false);
         assertKey("\u001b\u007f", KeyType.Backspace, false, true, false);
         assertKey("\b", KeyType.Character, true, false, false);
