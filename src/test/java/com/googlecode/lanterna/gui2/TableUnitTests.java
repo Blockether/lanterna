@@ -51,10 +51,10 @@ public class TableUnitTests {
         addRowsWithLongSecondColumn(4);
         assertScreenEquals("" +
                 "a  b\n" +
-                "A1                           ▲\n" +
-                "A2                           █\n" +
-                "A3                           ▼\n" +
-                "◄█████████████▒▒▒▒▒▒▒▒▒▒▒▒▒▒►");
+                "A1                           █\n" +
+                "A2                           ▒\n" +
+                "A3                           ▒\n" +
+                "█▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒");
     }
 
     @Test
@@ -63,10 +63,10 @@ public class TableUnitTests {
         addRowsWithLongSecondColumn(4);
         assertScreenEquals("" +
                 "a  b\n" +
-                "A1 BBBBBBBBBBBBBBBBBBBBBBBBBB▲\n" +
-                "A2 BBBBBBBBBBBBBBBBBBBBBBBBBB█\n" +
-                "A3 BBBBBBBBBBBBBBBBBBBBBBBBBB▼\n" +
-                "◄█████████████▒▒▒▒▒▒▒▒▒▒▒▒▒▒►");
+                "A1 BBBBBBBBBBBBBBBBBBBBBBBBBB█\n" +
+                "A2 BBBBBBBBBBBBBBBBBBBBBBBBBB▒\n" +
+                "A3 BBBBBBBBBBBBBBBBBBBBBBBBBB▒\n" +
+                "█▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒");
     }
 
     @Test
@@ -78,10 +78,10 @@ public class TableUnitTests {
         addRowsWithLongThirdColumn(4);
         assertScreenEquals("" +
                 "a  b\n" +
-                "A1 BBBBBBBBBBBBBBBBBBBBBBBBBB▲\n" +
-                "A2 BBBBBBBBBBBBBBBBBBBBBBBBBB█\n" +
-                "A3 BBBBBBBBBBBBBBBBBBBBBBBBBB▼\n" +
-                "◄▒▒▒▒▒▒▒▒▒█████████▒▒▒▒▒▒▒▒▒►");
+                "A1 BBBBBBBBBBBBBBBBBBBBBBBBBB█\n" +
+                "A2 BBBBBBBBBBBBBBBBBBBBBBBBBB▒\n" +
+                "A3 BBBBBBBBBBBBBBBBBBBBBBBBBB▒\n" +
+                "▒▒▒▒▒▒▒▒▒▒▒▒▒▒█▒▒▒▒▒▒▒▒▒▒▒▒▒▒");
     }
 
     @Test
@@ -90,8 +90,8 @@ public class TableUnitTests {
         addFourRows();
         assertScreenEquals("" +
                 "a  b\n" +
-                "A1 B1                        ▲\n" +
-                "A2 B2                        ▼");
+                "A1 B1                        █\n" +
+                "A2 B2                        ▒");
     }
 
     @Test
@@ -100,9 +100,9 @@ public class TableUnitTests {
         addRowsWithLongSecondColumn(4);
         assertScreenEquals("" +
                 "a  b\n" +
-                "A1                           ▲\n" +
-                "A2                           ▼\n" +
-                "◄█████████████▒▒▒▒▒▒▒▒▒▒▒▒▒▒►");
+                "A1                           █\n" +
+                "A2                           ▒\n" +
+                "█▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒");
     }
 
     @Test
@@ -145,18 +145,18 @@ public class TableUnitTests {
         table.setSelectedRow(1);
         assertScreenEquals("" +
                 "a  b\n" +
-                "A1 B1                        ▲\n" +
-                "A2 B2                        ▼");
+                "A1 B1                        █\n" +
+                "A2 B2                        ▒");
         table.setSelectedRow(2);
         assertScreenEquals("" +
                 "a  b\n" +
-                "A2 B2                        ▲\n" +
-                "A3 B3                        ▼");
+                "A2 B2                        █\n" +
+                "A3 B3                        ▒");
         table.setSelectedRow(3);
         assertScreenEquals("" +
                 "a  b\n" +
-                "A3 B3                        ▲\n" +
-                "A4 B4                        ▼");
+                "A3 B3                        ▒\n" +
+                "A4 B4                        █");
     }
 
     @Test
@@ -166,8 +166,8 @@ public class TableUnitTests {
         table.setSelectedRow(3);
         assertScreenEquals("" +
                 "a  b\n" +
-                "A3 B3                        ▲\n" +
-                "A4 B4                        ▼");
+                "A3 B3                        ▒\n" +
+                "A4 B4                        █");
     }
 
     @Test
@@ -177,8 +177,8 @@ public class TableUnitTests {
         table.setSelectedRow(300);
         assertScreenEquals("" +
                 "a  b\n" +
-                "A3 B3                        ▲\n" +
-                "A4 B4                        ▼");
+                "A3 B3                        ▒\n" +
+                "A4 B4                        █");
     }
 
     @Test
@@ -189,8 +189,8 @@ public class TableUnitTests {
         model.removeRow(3);
         assertScreenEquals("" +
                 "a  b\n" +
-                "A2 B2                        ▲\n" +
-                "A3 B3                        ▼");
+                "A2 B2                        ▒\n" +
+                "A3 B3                        █");
     }
 
     @Test
@@ -200,13 +200,13 @@ public class TableUnitTests {
         table.setSelectedRow(2);
         assertScreenEquals("" +
                 "a  b\n" +
-                "A2 B2                        ▲\n" +
-                "A3 B3                        ▼");
+                "A2 B2                        █\n" +
+                "A3 B3                        ▒");
         model.insertRow(0, Arrays.asList("AX", "AX"));
         assertScreenEquals("" +
                 "a  b\n" +
-                "A2 B2                        ▲\n" +
-                "A3 B3                        ▼");
+                "A2 B2                        █\n" +
+                "A3 B3                        ▒");
     }
 
     @Test
@@ -217,8 +217,8 @@ public class TableUnitTests {
         model.removeRow(0);
         assertScreenEquals("" +
                 "a  b\n" +
-                "A3 B3                        ▲\n" +
-                "A4 B4                        ▼");
+                "A3 B3                        ▒\n" +
+                "A4 B4                        █");
     }
 
     // ---------------- END OF TESTS ----------------
