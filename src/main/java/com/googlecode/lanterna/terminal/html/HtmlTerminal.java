@@ -124,6 +124,19 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
                 this, version.get(), defaultForeground, defaultBackground, currentMedia);
     }
 
+    /** Export the first visibleRows rows without resizing or repainting the live terminal. */
+    public String renderHtml(int visibleRows) {
+        HtmlTerminalRenderer.Frame frame = snapshot();
+        if (visibleRows < 1 || visibleRows > frame.rows()) {
+            throw new IllegalArgumentException("visibleRows must be within the terminal viewport");
+        }
+        return HtmlTerminalRenderer.renderDocument(new HtmlTerminalRenderer.Frame(
+                frame.version(), frame.columns(), visibleRows,
+                frame.defaultForeground(), frame.defaultBackground(), false, null,
+                frame.runs().stream().filter(run -> run.y() < visibleRows).toList(),
+                frame.media().stream().filter(item -> item.getPosition().getRow() < visibleRows).toList()), title);
+    }
+
     /** Current frame as one file with inline CSS, JavaScript, cells and media. */
     public String renderHtml() {
         return HtmlTerminalRenderer.renderDocument(snapshot(), title);
@@ -179,6 +192,11 @@ public final class HtmlTerminal extends DefaultVirtualTerminal {
                 clamp(columns, minColumns, maxColumns), clamp(rows, minRows, maxRows));
         if (!size.equals(getTerminalSize())) setTerminalSize(size);
         return size;
+    }
+
+    /** Write a bounded static review; live terminal dimensions and input are unchanged. */
+    public void writeHtml(Path path, int visibleRows) throws IOException {
+        Files.writeString(path, renderHtml(visibleRows), StandardCharsets.UTF_8);
     }
 
     public void writeHtml(Path path) throws IOException {

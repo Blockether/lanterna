@@ -10,6 +10,14 @@
 html, body { width: 100%; height: 100%; margin: 0; background: var(--paper); color: var(--ink); }
 body { overflow: hidden; }
 #viewport { position: fixed; inset: 0; overflow: auto; padding: var(--row-h) var(--cell-w); background: var(--paper); }
+#review-controls { display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 4px 8px; font: 12px/18px ui-monospace, monospace; }
+#review-controls span { margin-right: auto; }
+#review-controls button { min-height: 44px; padding: 0 10px; font: inherit; color: inherit; background: var(--paper); border: 1px solid currentColor; }
+#review-controls button[aria-pressed="true"] { font-weight: bold; text-decoration: underline; }
+body[data-live="false"] #viewport { top: 52px; }
+body[data-live="false"] #canvas { position: relative; }
+body[data-live="false"] #terminal { position: absolute; transform-origin: top left; overflow: hidden; user-select: text; touch-action: auto; }
+body[data-live="false"] .cursor { display: none; }
 #terminal, #probe { font: 14px/18px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-variant-ligatures: none; }
 #terminal { position: relative; display: grid; width: max-content; height: max-content; outline: none; user-select: none; cursor: default; touch-action: manipulation; }
 .frame, #cells, #media-layer { display: contents; }
@@ -72,6 +80,29 @@ __LANTERNA_BODY__
   let pendingMove = null;
   let composing = false;
   let inputTail = Promise.resolve();
+  let fitWidth = true;
+
+  function fitReview() {
+    if (live) return;
+    const available = Math.max(1, viewport.clientWidth - 2 * cellWidth);
+    const scale = fitWidth ? Math.min(1, available / (columns * cellWidth)) : 1;
+    terminal.style.transform = `scale(${scale})`;
+    const canvas = document.getElementById('canvas');
+    canvas.style.width = `${columns * cellWidth * scale}px`;
+    canvas.style.height = `${rows * rowHeight * scale}px`;
+    document.getElementById('fit-width').setAttribute('aria-pressed', String(fitWidth));
+    document.getElementById('actual-size').setAttribute('aria-pressed', String(!fitWidth));
+  }
+
+  if (!live) {
+    for (const id of ['fit-width', 'actual-size']) {
+      document.getElementById(id).addEventListener('click', () => {
+        fitWidth = id === 'fit-width';
+        fitReview();
+      });
+    }
+    new ResizeObserver(fitReview).observe(viewport);
+  }
 
   function apply(next) {
     if (next !== frame) {
@@ -103,8 +134,10 @@ __LANTERNA_BODY__
     rowHeight = parseFloat(getComputedStyle(probe).lineHeight) || 18;
     document.documentElement.style.setProperty('--cell-w', `${cellWidth}px`);
     document.documentElement.style.setProperty('--row-h', `${rowHeight}px`);
+    if (!live) terminal.style.transform = 'none';
     cellWidth = terminal.getBoundingClientRect().width / Math.max(1, columns);
     document.documentElement.style.setProperty('--cell-w', `${cellWidth}px`);
+    fitReview();
   }
 
   function resizeToViewport() {
@@ -204,7 +237,7 @@ __LANTERNA_BODY__
     event.preventDefault();
     mouse(event.deltaY < 0 ? 'SCROLL_UP' : 'SCROLL_DOWN', event, event.deltaY < 0 ? 4 : 5);
   }, {passive: false});
-  terminal.addEventListener('contextmenu', event => event.preventDefault());
+  terminal.addEventListener('contextmenu', event => { if (live) event.preventDefault(); });
 
   apply(frame);
   Promise.resolve(document.fonts && document.fonts.ready).then(() => {

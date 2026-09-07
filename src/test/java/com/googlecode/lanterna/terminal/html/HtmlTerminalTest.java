@@ -204,9 +204,6 @@ public class HtmlTerminalTest {
         for (java.lang.reflect.Method method : HtmlTerminal.Builder.class.getMethods()) {
             assertFalse(method.getName(), removedMethods.contains(method.getName()));
         }
-        for (java.lang.reflect.Method method : HtmlTerminalView.class.getMethods()) {
-            assertFalse(method.getName(), List.of("serve", "getUrl").contains(method.getName()));
-        }
         for (java.lang.reflect.Field field : HtmlTerminal.class.getDeclaredFields()) {
             assertFalse(field.getType().getName(), field.getType().getName().startsWith("com.sun.net.httpserver"));
         }

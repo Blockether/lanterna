@@ -58,7 +58,7 @@ public final class HtmlTerminalView implements AutoCloseable {
     private final BasicWindow window;
     private final AsynchronousTextGUIThread guiThread;
     private final AtomicBoolean closed;
-
+    private HtmlTerminalPreview preview;
     private HtmlTerminalView(HtmlTerminal terminal, Component component) throws IOException {
         this.terminal = Objects.requireNonNull(terminal, "terminal");
         Objects.requireNonNull(component, "component");
@@ -88,6 +88,33 @@ public final class HtmlTerminalView implements AutoCloseable {
             terminal.close();
             throw exception;
         }
+    }
+
+    /** Start a resizable GUI2 preview on an ephemeral loopback URL. Close the view to stop it. */
+    public static HtmlTerminalView serve(Component component, TerminalSize size, String title) throws IOException {
+        return serve(component, HtmlTerminal.builder().initialSize(size).title(title).build());
+    }
+
+    /** Serve a configured terminal; the returned view owns both GUI2 and its local preview. */
+    public static HtmlTerminalView serve(Component component, HtmlTerminal terminal) throws IOException {
+        HtmlTerminalView view = start(component, terminal);
+        try {
+            view.preview = HtmlTerminalPreview.start(terminal);
+            return view;
+        } catch (IOException | RuntimeException exception) {
+            try {
+                view.close();
+            } catch (IOException suppressed) {
+                exception.addSuppressed(suppressed);
+            }
+            throw exception;
+        }
+    }
+
+    /** The local URL of a served view; start() remains transport-neutral. */
+    public java.net.URI getUri() {
+        if (preview == null) throw new IllegalStateException("This view was not started with serve");
+        return preview.getUri();
     }
 
     /** Start a component against a 120 by 40 cell browser terminal. */
@@ -180,6 +207,10 @@ public final class HtmlTerminalView implements AutoCloseable {
         return terminal.renderHtml();
     }
 
+    public void writeHtml(Path path, int visibleRows) throws IOException {
+        terminal.writeHtml(path, visibleRows);
+    }
+
     public void writeHtml(Path path) throws IOException {
         terminal.writeHtml(path);
     }
@@ -190,6 +221,7 @@ public final class HtmlTerminalView implements AutoCloseable {
             return;
         }
 
+        if (preview != null) preview.close();
         guiThread.stop();
         terminal.addInput(new KeyStroke(KeyType.EOF));
         try {

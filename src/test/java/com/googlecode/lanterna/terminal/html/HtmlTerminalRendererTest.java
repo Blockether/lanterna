@@ -24,6 +24,29 @@ import static org.junit.Assert.*;
 
 public class HtmlTerminalRendererTest {
     @Test
+    public void reviewExportHasExplicitHeightAndStaticViewingControls() {
+        HtmlTerminal terminal = HtmlTerminal.builder()
+                .initialSize(new TerminalSize(128, 32))
+                .defaultBackground(new TextColor.RGB(250, 244, 235)).build();
+        terminal.newTextGraphics().putString(0, 2, "VISIBLE");
+        terminal.newTextGraphics().putString(0, 20, "OUTSIDE");
+        String html = terminal.renderHtml(12);
+        assertTrue(html.contains("VISIBLE"));
+        assertFalse(html.contains("OUTSIDE"));
+        assertTrue(html.contains("<textarea id=\"input\" disabled tabindex=\"-1\""));
+        assertTrue(html.contains("role=\"region\""));
+        assertTrue(html.contains("data-rows=\"12\""));
+        assertTrue(html.contains("--paper:#faf4eb"));
+        assertTrue(html.contains("Fit width"));
+        assertTrue(html.contains("Actual size"));
+        assertTrue(html.contains("Static frame"));
+        assertEquals(32, terminal.getTerminalSize().getRows());
+        assertThrows(IllegalArgumentException.class, () -> terminal.renderHtml(0));
+        assertThrows(IllegalArgumentException.class, () -> terminal.renderHtml(33));
+        terminal.close();
+    }
+
+    @Test
     public void snapshotPreservesEveryGraphicRenditionAndResolvesReverseColors() {
         DefaultVirtualTerminal terminal = new DefaultVirtualTerminal(new TerminalSize(4, 2));
         terminal.setForegroundColor(new TextColor.RGB(1, 2, 3));

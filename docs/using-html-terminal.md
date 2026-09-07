@@ -30,11 +30,42 @@ characters, the cursor, ANSI, indexed and RGB colours, and every `SGR` modifier.
 `renderHtml()` and `writeHtml(Path)` export the current frame with inline CSS,
 cells and media. The resulting file needs no server or external asset.
 
+## Local review
+
+Use the production component directly. One call starts GUI2, a loopback-only HTTP preview,
+SSE and browser input; closing the view stops all of them:
+
+```java
+try (HtmlTerminalView view = HtmlTerminalView.serve(
+        component, HtmlTerminal.builder()
+                .initialSize(new TerminalSize(80, 24))
+                .defaultForeground(themeForeground)
+                .defaultBackground(themeBackground)
+                .title("Component review").build())) {
+    System.out.println(view.getUri());
+    // Review the live page, then export only the intended content rows.
+    view.writeHtml(Path.of("review.html"), 12);
+}
+```
+
+Keep the view alive for the duration of the browser review. For an existing `TerminalScreen`
+application, `HtmlTerminalPreview.start(terminal)` supplies only the local transport; the
+application retains its ordinary input/repaint loop. Closing this preview leaves the terminal open.
+The helper is for local development, not deployment or remote access.
+
+Static exports start in **Fit width** mode and offer **Actual size** for readable zoom and pan.
+They preserve terminal columns, not responsive application layout. For a readable phone review,
+render at phone-sized columns before exporting rather than shrinking a desktop frame.
+`writeHtml(path, visibleRows)` explicitly bounds the exported rows without resizing the live
+terminal. It clips media at that boundary and excludes lower text rows; it is not a redaction API.
+Configure default foreground/background to match the application's theme. A static frame hides
+the input cursor, and its terminal disclosure marks are not live JVM callbacks.
+
 ## Host-owned HTTP transport
 
-Lanterna deliberately contains no HTTP server, Jetty or servlet dependency and
-opens no socket. The application plugs the terminal into the HTTP stack it already
-owns:
+`HtmlTerminal` and `HtmlTerminalEndpoint` remain transport-neutral: neither starts a server.
+Production applications plug these into their existing authenticated HTTP stack; the optional
+`HtmlTerminalPreview` is not involved:
 
 ```java
 try (HtmlTerminal terminal = HtmlTerminal.builder().build()) {

@@ -75,8 +75,9 @@ public class HtmlTerminalViewTest {
         grid.addComponent(new Label("Action"));
         grid.addComponent(toggle);
 
-        try (HtmlTerminalView view = HtmlTerminalView.start(
+        try (HtmlTerminalView view = HtmlTerminalView.serve(
                 grid, new TerminalSize(30, 8), "Interactive grid")) {
+            assertEquals("127.0.0.1", view.getUri().getHost());
             assertEquals(new TerminalSize(30, 8), view.getTerminal().getTerminalSize());
             assertTrue(view.renderHtml().contains("OFF"));
             assertTrue(rowText(view.getTerminal().snapshot(), 1).contains("<Toggle>"));
