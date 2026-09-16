@@ -405,15 +405,15 @@ public class TerminalImageTest {
 
     @Test
     public void aFullPlacementReferencesTheImageIdAndCellBox() {
-        assertEquals("\u001b_Ga=p,i=5,p=1,C=1,q=2,c=10,r=6\u001b\\",
-                TerminalImage.placeKitty(5, 10, 6));
+        assertEquals("\u001b_Ga=p,i=5,p=17,C=1,q=2,c=10,r=6\u001b\\",
+                TerminalImage.placeKitty(5, 17, 10, 6));
     }
 
     @Test
     public void aCroppedPlacementUsesTheSameSourceRectangleAsTheDisplayPath() {
         // crop-top 2 of 6 rows over a 120px-tall image => y=40; 3 visible rows => h=60.
-        assertEquals("\u001b_Ga=p,i=5,p=1,C=1,q=2,c=10,r=3,x=0,y=40,w=100,h=60\u001b\\",
-                TerminalImage.placeKitty(5, 10, 6, 2, 1, 100, 120));
+        assertEquals("\u001b_Ga=p,i=5,p=17,C=1,q=2,c=10,r=3,x=0,y=40,w=100,h=60\u001b\\",
+                TerminalImage.placeKitty(5, 17, 10, 6, 2, 1, 100, 120));
         // The transmit+display header computes the identical rectangle.
         assertTrue(TerminalImage.encodeKitty("", 10, 6, 2, 1, 100, 120)
                 .contains(",r=3,x=0,y=40,w=100,h=60"));
@@ -421,8 +421,21 @@ public class TerminalImageTest {
 
     @Test
     public void deletingAPlacementKeepsTheDataAndFreeingDropsIt() {
-        assertEquals("\u001b_Ga=d,d=i,i=5,q=2\u001b\\", TerminalImage.deleteKittyPlacement(5));
+        assertEquals("\u001b_Ga=d,d=i,i=5,p=17,q=2\u001b\\",
+                TerminalImage.deleteKittyPlacement(5, 17));
         assertEquals("\u001b_Ga=d,d=I,i=5,q=2\u001b\\", TerminalImage.freeKittyImage(5));
+    }
+
+    @Test
+    public void regionsOfOneImageHaveIndependentPlacements() {
+        // Blockether/vis#257: placements belong to rendered regions, not uploads.
+        String first = TerminalImage.placeKitty(5, 17, 10, 6);
+        String second = TerminalImage.placeKitty(5, 18, 10, 6);
+        assertTrue(first.contains("i=5,p=17,"));
+        assertTrue(second.contains("i=5,p=18,"));
+        assertEquals("\u001b_Ga=d,d=i,i=5,p=17,q=2\u001b\\",
+                TerminalImage.deleteKittyPlacement(5, 17));
+        assertEquals(second, TerminalImage.placeKitty(5, 18, 10, 6));
     }
 
     // ---- still images wearing a movie's container ---------------------------

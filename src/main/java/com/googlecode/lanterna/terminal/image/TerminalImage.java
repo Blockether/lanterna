@@ -871,17 +871,19 @@ public final class TerminalImage {
      * via the protocol's source rectangle — the SAME rectangle
      * {@link #encodeKitty(String,int,int,int,int,int,int)} computes.
      *
-     * <p>Reusing placement id {@code p=1} REPLACES the prior placement, so a scroll
-     * moves the picture atomically: no delete-all, no re-upload, no flash.
+     * <p>The pair of image id and placement id identifies a placement. Reuse the
+     * same pair to move it without re-uploading; use a different placement id for
+     * each independently displayed region, even when it shares the same image.
      */
-    public static String placeKitty(int id, int cols, int rows,
+    public static String placeKitty(int id, int placementId, int cols, int rows,
                                     int cropTopRows, int cropBottomRows,
                                     int imgW, int imgH) {
         int ct = Math.max(0, cropTopRows);
         int cb = Math.max(0, cropBottomRows);
         int visRows = Math.max(1, rows - ct - cb);
         StringBuilder acc = new StringBuilder(64);
-        acc.append(ESC).append("_Ga=p,i=").append(id).append(",p=1,C=1,q=2");
+        acc.append(ESC).append("_Ga=p,i=").append(id)
+                .append(",p=").append(placementId).append(",C=1,q=2");
         if (cols > 0) {
             acc.append(",c=").append(cols);
         }
@@ -904,18 +906,17 @@ public final class TerminalImage {
         return acc.append(ESC).append('\\').toString();
     }
 
-    /** {@link #placeKitty(int,int,int,int,int,int,int)} with no source crop. */
-    public static String placeKitty(int id, int cols, int rows) {
-        return placeKitty(id, cols, rows, 0, 0, 0, 0);
+    /** {@link #placeKitty(int,int,int,int,int,int,int,int)} with no source crop. */
+    public static String placeKitty(int id, int placementId, int cols, int rows) {
+        return placeKitty(id, placementId, cols, rows, 0, 0, 0, 0);
     }
 
     /**
-     * Kitty sequence removing image {@code id}'s placement while KEEPING its
-     * uploaded data, so an image scrolled off screen leaves no ghost yet needs no
-     * re-upload when it scrolls back into view.
+     * Remove only the specified image/placement pair while KEEPING uploaded data
+     * and other placements of that image. The image can return without re-upload.
      */
-    public static String deleteKittyPlacement(int id) {
-        return ESC + "_Ga=d,d=i,i=" + id + ",q=2" + ESC + "\\";
+    public static String deleteKittyPlacement(int id, int placementId) {
+        return ESC + "_Ga=d,d=i,i=" + id + ",p=" + placementId + ",q=2" + ESC + "\\";
     }
 
     /**

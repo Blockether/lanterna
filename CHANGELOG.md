@@ -11,6 +11,12 @@
 > and a complete HTML terminal backend. It remains a drop-in replacement for
 > `com.googlecode.lanterna:lanterna:3.1.5` and adds focused public packages.
 
+### `3.1.5-vis.51`
+
+- Give `TerminalImage.placeKitty` and `deleteKittyPlacement` explicit placement
+  IDs. Callers can move or remove one image region without replacing or deleting
+  another placement of the same uploaded image (Blockether/vis#257).
+
 ### `3.1.5-vis.44`
 
 - Make the live HTML terminal server-rendered: the first document contains the
