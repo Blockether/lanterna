@@ -1204,30 +1204,38 @@ public class TerminalTextUtils {
     }
 
     /**
-     * Word-wrap {@code text} to {@code width} columns, then full-justify every
-     * line. The final line of each paragraph stays left-aligned unless
-     * {@code justifyLastLine} is true — the standard typographic convention.
+     * Optimize paragraph breaks with {@link ParagraphLayout}, then full-justify
+     * the lines in terminal cells. Explicit hard breaks and paragraph endings
+     * stay ragged unless {@code justifyLastLine} is true. Oversized, unsupported
+     * or unfit material retains the grapheme-safe {@link #wordWrap} fallback.
      * @param width wrap + justify width in columns
      * @param text input (nullable)
      * @param justifyLastLine also stretch each paragraph's final line
      * @return justified lines
      */
     public static List<String> justify(int width, String text, boolean justifyLastLine) {
-        List<String> wrapped = wordWrap(width, text);
-        if (justifyLastLine) {
-            List<String> out = new ArrayList<>(wrapped.size());
-            for (String line : wrapped) {
-                out.add(justifyLine(line, width));
-            }
+        List<String> out = new ArrayList<>();
+        if (width <= 0) {
+            out.add("");
             return out;
         }
-        // Leave the last line of each paragraph (run up to a blank line or the
-        // end) left-aligned.
-        List<String> out = new ArrayList<>(wrapped.size());
-        for (int i = 0; i < wrapped.size(); i++) {
-            String line = wrapped.get(i);
-            boolean lastOfParagraph = (i == wrapped.size() - 1) || wrapped.get(i + 1).isEmpty();
-            out.add(line.isEmpty() || lastOfParagraph ? line : justifyLine(line, width));
+        for (String paragraph : (text == null ? "" : text).split("\n", -1)) {
+            List<String> wrapped = null;
+            if (ParagraphLayout.isTerminalProse(paragraph)) {
+                ParagraphLayout.Prepared prepared = ParagraphLayout.prepare(paragraph);
+                ParagraphLayout.Layout layout = ParagraphLayout.solve(prepared, width, ParagraphLayout.Options.terminal());
+                if (!layout.lines().isEmpty() && layout.lines().stream().allMatch(line -> line.natural() <= width)) {
+                    wrapped = layout.lines().stream().map(line -> ParagraphLayout.lineText(prepared, line)).toList();
+                }
+            }
+            if (wrapped == null) {
+                wrapped = wordWrap(width, paragraph);
+            }
+            for (int i = 0; i < wrapped.size(); i++) {
+                String line = wrapped.get(i);
+                boolean last = i == wrapped.size() - 1;
+                out.add(line.isEmpty() || (last && !justifyLastLine) ? line : justifyLine(line, width));
+            }
         }
         return out;
     }

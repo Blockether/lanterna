@@ -174,4 +174,23 @@ public class TerminalTextFlowTest {
         assertEquals("", TerminalTextUtils.foldColumns(10, "").get(0));
         assertEquals(1, TerminalTextUtils.foldColumns(10, null).size());
     }
+
+    @Test
+    public void justify_optimizes_the_whole_paragraph_instead_of_greedy_lines() {
+        // Justice 0.3.0 oracle with cell policy: no shrink, tracking or optical margins.
+        String prose = "A quiet paragraph can become much more comfortable when its lines share "
+                + "a reasonably even rhythm of spaces instead of alternating between very tight "
+                + "and very loose arrangements.";
+        List<String> lines = TerminalTextUtils.justify(24, prose, false).stream()
+                .map(line -> line.replaceAll(" +", " ")).toList();
+        assertEquals(List.of("A quiet paragraph", "can become much more", "comfortable when its",
+                "lines share a reasonably", "even rhythm of spaces", "instead of alternating",
+                "between very tight and", "very loose arrangements."), lines);
+    }
+
+    @Test
+    public void justify_keeps_each_explicit_hard_break_ragged() {
+        assertEquals(List.of("alpha beta", "one two"),
+                TerminalTextUtils.justify(40, "alpha beta\none two", false));
+    }
 }
