@@ -177,7 +177,7 @@ public class TerminalTextFlowTest {
 
     @Test
     public void justify_optimizes_the_whole_paragraph_instead_of_greedy_lines() {
-        // Justice 0.3.0 oracle with cell policy: no shrink, tracking or optical margins.
+        // Justice 0.3.2 oracle with cell policy: no shrink, tracking or optical margins.
         String prose = "A quiet paragraph can become much more comfortable when its lines share "
                 + "a reasonably even rhythm of spaces instead of alternating between very tight "
                 + "and very loose arrangements.";

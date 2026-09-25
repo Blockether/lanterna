@@ -174,18 +174,32 @@ public class ParagraphLayoutTest {
         Prepared prepared = ParagraphLayout.prepare(PROSE, MEASURE);
         Options independent = new Options();
         independent.adjacentPenalty = 0;
-        Layout withoutAdjacency = ParagraphLayout.solve(prepared, 187, independent);
-        Layout adjacent = ParagraphLayout.solve(prepared, 187);
-        assertEquals(5, jumps(withoutAdjacency));
-        assertEquals(3, jumps(adjacent));
+        Layout withoutAdjacency = ParagraphLayout.solve(prepared, 300, independent);
+        Layout adjacent = ParagraphLayout.solve(prepared, 300);
+        assertEquals(3, jumps(withoutAdjacency));
+        assertEquals(1, jumps(adjacent));
         assertTrue(adjacent.cost() < withoutAdjacency.cost() + 100 * jumps(withoutAdjacency));
         assertEquals(PROSE, String.join(" ", texts(prepared, adjacent)));
         Prepared terminal = ParagraphLayout.prepare(PROSE);
         Layout cells = ParagraphLayout.solve(terminal, 24, Options.terminal());
-        assertEquals(746.124696359168, cells.cost(), 1e-9);
+        assertEquals(1663.9977213541667, cells.cost(), 1e-9);
         assertEquals(List.of("A quiet paragraph", "can become much more", "comfortable when its",
                 "lines share a reasonably", "even rhythm of spaces", "instead of alternating",
                 "between very tight and", "very loose arrangements."), texts(terminal, cells));
+    }
+
+    @Test
+    public void prices_sparse_emergency_lines_by_their_word_spaces() {
+        // Justice 0.3.2 oracle with cell policy. Earlier emergency credit grew with the
+        // width alone, so "documented configuration" won with a single 7-cell gap.
+        String text = "Run the migration with the documented configuration flags before restarting "
+                + "the gateway, then verify that every connected companion device reconnects cleanly.";
+        Prepared prepared = ParagraphLayout.prepare(text);
+        Layout layout = ParagraphLayout.solve(prepared, 30, Options.terminal());
+        assertEquals(988.689525462963, layout.cost(), 1e-9);
+        assertEquals(List.of("Run the migration with the", "documented configuration flags",
+                "before restarting the gateway,", "then verify that every", "connected companion device",
+                "reconnects cleanly."), texts(prepared, layout));
     }
 
     @Test
@@ -451,7 +465,8 @@ public class ParagraphLayoutTest {
                 }
             }
             if (emergency && delta > 0) {
-                strain = 100 * Math.pow(delta / (capacity + width * o.emergencyStretch), 3);
+                double extra = Math.min(width * o.emergencyStretch, gaps * 4);
+                strain = 100 * Math.pow(delta / Math.max(4, capacity + extra), 3);
             }
             if (o.mode == Mode.BALANCED && o.emergencyStretch > 0 && !emergency
                     && (delta > capacity * Math.cbrt(2) + 0.01 || Math.abs(residual) > 0.01)) {

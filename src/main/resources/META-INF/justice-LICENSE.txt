@@ -1,6 +1,6 @@
 Justice numerical paragraph engine
 https://github.com/kitlangton/justice
-Source: f87695114572db6d50bc7a80cf2520fceacd2759 (MIT-licensed; engine identical to 0.3.0)
+Source: 86dbc6da8cc2059cabb2a67c0aa42d773d5023e2 (MIT-licensed; engine identical to 0.3.2)
 
 MIT License
 

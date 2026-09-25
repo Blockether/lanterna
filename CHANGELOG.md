@@ -11,6 +11,13 @@
 > and a complete HTML terminal backend. It remains a drop-in replacement for
 > `com.googlecode.lanterna:lanterna:3.1.5` and adds focused public packages.
 
+### `3.1.5-vis.53`
+
+- Update `ParagraphLayout` to Justice 0.3.2. Emergency fitting now limits its
+  extra scoring credit to one natural space per word gap, so a sparse line with
+  very wide gaps no longer beats a normally spaced alternative. Some narrow
+  paragraphs break differently.
+
 ### `3.1.5-vis.51`
 
 - Give `TerminalImage.placeKitty` and `deleteKittyPlacement` explicit placement

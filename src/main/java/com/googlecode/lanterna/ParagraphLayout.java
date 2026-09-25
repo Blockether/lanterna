@@ -19,7 +19,7 @@ import java.util.regex.Pattern;
 
 /**
  * Whole-paragraph line breaking, adapted from Justice's complete numerical engine
- * at commit f87695114572db6d50bc7a80cf2520fceacd2759 (identical to version 0.3.0).
+ * at commit 86dbc6da8cc2059cabb2a67c0aa42d773d5023e2 (identical to version 0.3.2).
  * Preparation measures words once; solving can reuse those measurements across
  * widths and policies. No rendering, font, dictionary or terminal is required.
  *
@@ -524,8 +524,12 @@ public final class ParagraphLayout {
         double ratio = capacity != 0 ? Math.min(1, Math.abs(delta) / capacity) : 0;
         double sign = Math.signum(delta);
         double residual = delta - sign * ratio * capacity;
+        // Emergency credit must reflect the spaces that can carry it. A width-only
+        // allowance makes two enormous gaps cheaper than a normally spaced paragraph
+        // with a hyphen. A natural-space floor keeps indivisible lines finite too.
         double strain = emergency && delta > 0
-                ? 100 * cube(delta / (capacity + width * o.emergencyStretch))
+                ? 100 * cube(delta / Math.max(p.space,
+                        capacity + Math.min(width * o.emergencyStretch, gaps * p.space)))
                 : o.mode == Mode.BALANCED
                 ? 100 * cube(ratio + Math.abs(residual) / Math.max(capacity, Math.max(gaps * p.space, p.space)))
                 : 100 * cube(ratio);
