@@ -268,6 +268,40 @@ public class ParagraphLayoutTest {
     }
 
     @Test
+    public void breaks_joined_code_at_explicit_offsets_with_hanging_spaces() {
+        String code = "aaaa\u00a0bbbb\u00a0cc";
+        Prepared p = ParagraphLayout.prepare(code, new int[] {10, 5});
+        Layout layout = ParagraphLayout.solve(p, 4, Options.terminal());
+        assertEquals(List.of("aaaa\u00a0", "bbbb\u00a0", "cc"), texts(p, layout));
+        assertEquals(List.of(4.0, 4.0, 2.0), layout.lines().stream().map(Line::natural).toList());
+        assertEquals(List.of(0, 5, 10), layout.lines().stream().map(Line::sourceStart).toList());
+        assertEquals(List.of(5, 10, 12), layout.lines().stream().map(Line::sourceEnd).toList());
+        assertTrue(layout.lines().stream().noneMatch(Line::hyphenated));
+        assertEquals(texts(p, layout), texts(ParagraphLayout.prepare(code, new int[] {99, 12, 10, -1, 0, 5}),
+                ParagraphLayout.solve(ParagraphLayout.prepare(code, new int[] {99, 12, 10, -1, 0, 5}), 4,
+                        Options.terminal())));
+        assertEquals(List.of(code), texts(ParagraphLayout.prepare(code),
+                ParagraphLayout.solve(ParagraphLayout.prepare(code), 4, Options.terminal())));
+        Options expensive = Options.terminal();
+        expensive.explicitHyphenPenalty = 500;
+        Options free = Options.terminal();
+        free.explicitHyphenPenalty = 0;
+        assertEquals(1000, ParagraphLayout.solve(p, 4, expensive).cost() - ParagraphLayout.solve(p, 4, free).cost(),
+                1e-8);
+        Prepared inside = ParagraphLayout.prepare("x👍y", new int[] {2});
+        assertEquals(List.of("x👍y"), texts(inside, ParagraphLayout.solve(inside, 3, Options.terminal())));
+        Prepared after = ParagraphLayout.prepare("x👍y", new int[] {3});
+        assertEquals(List.of("x👍", "y"), texts(after, ParagraphLayout.solve(after, 3, Options.terminal())));
+        Prepared merged = ParagraphLayout.withHyphenation(ParagraphLayout.prepare("abc/defghi", MEASURE, new int[] {4}),
+                (word, index) -> List.of("abc/def", "ghi"), (part, index) -> MEASURE.applyAsDouble(part));
+        Options options = new Options();
+        options.tracking = 0;
+        Layout kept = ParagraphLayout.solve(merged, 32, options);
+        assertEquals(List.of("abc/", "def-", "ghi"), texts(merged, kept));
+        assertEquals(List.of(false, true, false), kept.lines().stream().map(Line::hyphenated).toList());
+    }
+
+    @Test
     public void supports_successive_hyphens_and_charges_adjacency_and_final_penalties() {
         AtomicInteger calls = new AtomicInteger();
         Prepared p = ParagraphLayout.withHyphenation(ParagraphLayout.prepare("abcdefghijklmnopqr", MEASURE),

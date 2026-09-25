@@ -11,6 +11,14 @@
 > and a complete HTML terminal backend. It remains a drop-in replacement for
 > `com.googlecode.lanterna:lanterna:3.1.5` and adds focused public packages.
 
+### `3.1.5-vis.54`
+
+- Add explicit breaks to `ParagraphLayout.prepare`: offsets inside a word where a
+  line may also end without a generated hyphen, such as after a space or a path
+  separator, or before a dot, inside literal code that NBSP keeps together. Spaces
+  just before such a break are not counted in the width of the line they end.
+  `withHyphenation` keeps these breaks next to dictionary breaks.
+
 ### `3.1.5-vis.53`
 
 - Update `ParagraphLayout` to Justice 0.3.2. Emergency fitting now limits its

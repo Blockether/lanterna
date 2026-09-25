@@ -231,13 +231,36 @@ public final class ParagraphLayout {
     }
 
     /**
+     * Terminal preparation with explicit breaks, such as the joints of literal
+     * code. See {@link #prepare(String, ToDoubleFunction, int[])}.
+     */
+    public static Prepared prepare(String text, int[] breaks) {
+        return prepare(text, TerminalTextUtils::displayWidth, breaks);
+    }
+
+    /**
      * Collapse ASCII whitespace, retain NBSP inside an indivisible word, and
      * cache repeated measurements. Explicit source hyphens between letters or
      * numbers are legal breakpoints without adding a glyph.
      */
     public static Prepared prepare(String text, ToDoubleFunction<String> measure) {
+        return prepare(text, measure, new int[0]);
+    }
+
+    /**
+     * Prepare with explicit breaks: UTF-16 offsets into {@code text} where a
+     * line may also end without a generated hyphen, for example after a space
+     * or a path separator inside literal code that NBSP keeps together. Like a
+     * source hyphen, each break costs {@link Options#explicitHyphenPenalty}.
+     * Space characters just before a break are not measured at the end of its
+     * line. Offsets that are not strictly inside a word on a grapheme boundary
+     * are ignored. Every break adds candidate lines, so keep them bounded.
+     */
+    public static Prepared prepare(String text, ToDoubleFunction<String> measure, int[] breaks) {
         Objects.requireNonNull(text, "text");
         Objects.requireNonNull(measure, "measure");
+        int[] explicitBreaks = Objects.requireNonNull(breaks, "breaks").clone();
+        Arrays.sort(explicitBreaks);
         List<String> words = new ArrayList<>();
         List<Integer> starts = new ArrayList<>();
         Matcher matcher = WORD.matcher(text);
@@ -257,6 +280,7 @@ public final class ParagraphLayout {
         if (space <= 0) {
             throw new IllegalArgumentException("Space width must be positive");
         }
+        int next = 0;
         for (int i = 0; i < n; i++) {
             String word = words.get(i);
             double width = widthOf.applyAsDouble(word);
@@ -272,6 +296,19 @@ public final class ParagraphLayout {
             characters[i + 1] = characters[i]
                     + counts.computeIfAbsent(word, ParagraphLayout::graphemeCount);
             TreeSet<Integer> explicit = explicitHyphens(word);
+            int start = starts.get(i);
+            int end = start + word.length();
+            while (next < explicitBreaks.length && explicitBreaks[next] <= start) {
+                next++;
+            }
+            if (next < explicitBreaks.length && explicitBreaks[next] < end) {
+                TreeSet<Integer> graphemes = graphemeBoundaries(word);
+                for (; next < explicitBreaks.length && explicitBreaks[next] < end; next++) {
+                    if (graphemes.contains(explicitBreaks[next] - start)) {
+                        explicit.add(explicitBreaks[next] - start);
+                    }
+                }
+            }
             if (!explicit.isEmpty()) {
                 TreeSet<Integer> offsets = new TreeSet<>(explicit);
                 offsets.add(0);
@@ -296,6 +333,38 @@ public final class ParagraphLayout {
 
     private static int graphemeCount(String text) {
         return TextCharacter.fromString(text).length;
+    }
+
+    private static TreeSet<Integer> graphemeBoundaries(String word) {
+        TreeSet<Integer> graphemes = new TreeSet<>();
+        int position = 0;
+        graphemes.add(0);
+        for (TextCharacter cell : TextCharacter.fromString(word)) {
+            position += cell.getCharacterString().length();
+            graphemes.add(position);
+        }
+        return graphemes;
+    }
+
+    /** Space before a break hangs past the end of its line, like the space between words. */
+    private static String withoutTrailingSpace(String text) {
+        int end = text.length();
+        while (end > 0 && Character.isSpaceChar(text.charAt(end - 1))) {
+            end--;
+        }
+        return text.substring(0, end);
+    }
+
+    private static TreeSet<Integer> explicitBreaks(WordFragments fragments) {
+        TreeSet<Integer> offsets = new TreeSet<>();
+        if (fragments != null) {
+            for (int part = 1; part < fragments.offsets.length - 1; part++) {
+                if (fragments.explicit[part]) {
+                    offsets.add(fragments.offsets[part]);
+                }
+            }
+        }
+        return offsets;
     }
 
     private static TreeSet<Integer> explicitHyphens(String word) {
@@ -328,7 +397,8 @@ public final class ParagraphLayout {
                 int cell = from * n + to;
                 widths[cell] = from == 0 && to == n - 1 ? wordWidth : widthOf.applyAsDouble(text);
                 if (to < n - 1) {
-                    hyphenWidths[cell] = explicit[to] ? widths[cell] : widthOf.applyAsDouble(text + "-");
+                    hyphenWidths[cell] = explicit[to] ? widthOf.applyAsDouble(withoutTrailingSpace(text))
+                            : widthOf.applyAsDouble(text + "-");
                 }
                 characters[cell] = graphemeCount(text);
             }
@@ -337,9 +407,9 @@ public final class ParagraphLayout {
     }
 
     /**
-     * Add dictionary breaks, retaining explicit hyphens. Each fragment including
-     * its generated hyphen is measured as a shaped unit. Breaks cannot split a
-     * grapheme. NBSP words never reach the dictionary callback.
+     * Add dictionary breaks, retaining explicit hyphens and breaks. Each
+     * fragment including its generated hyphen is measured as a shaped unit.
+     * Breaks cannot split a grapheme. NBSP words never reach the dictionary callback.
      */
     public static Prepared withHyphenation(Prepared p, Hyphenator hyphenate, WordMeasurer measure) {
         Objects.requireNonNull(hyphenate, "hyphenate");
@@ -358,16 +428,10 @@ public final class ParagraphLayout {
             if (parts.size() == 1) {
                 continue;
             }
-            TreeSet<Integer> graphemes = new TreeSet<>();
-            int position = 0;
-            graphemes.add(0);
-            for (TextCharacter cell : TextCharacter.fromString(word)) {
-                position += cell.getCharacterString().length();
-                graphemes.add(position);
-            }
+            TreeSet<Integer> graphemes = graphemeBoundaries(word);
             TreeSet<Integer> offsets = new TreeSet<>();
             offsets.add(0);
-            position = 0;
+            int position = 0;
             for (String part : parts) {
                 position += part.length();
                 if (!graphemes.contains(position)) {
@@ -375,7 +439,7 @@ public final class ParagraphLayout {
                 }
                 offsets.add(position);
             }
-            TreeSet<Integer> explicit = explicitHyphens(word);
+            TreeSet<Integer> explicit = explicitBreaks(p.hyphenation[index]);
             offsets.addAll(explicit);
             int wordIndex = index;
             hyphenation[index] = fragments(word, p.widths[index + 1] - p.widths[index], offsets,
