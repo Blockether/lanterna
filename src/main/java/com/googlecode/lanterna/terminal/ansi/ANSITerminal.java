@@ -40,9 +40,18 @@ import java.nio.charset.Charset;
  */
 public abstract class ANSITerminal extends StreamBasedTerminal implements ExtendedTerminal {
 
+    // How long leaving win32-input-mode waits for the reports of keys pressed before it.
+    private static final long WIN32_INPUT_REPORTS_TIMEOUT_MILLIS = 500;
+
     private MouseCaptureMode requestedMouseCaptureMode;
     private MouseCaptureMode mouseCaptureMode;
     private boolean inPrivateMode;
+    private boolean requestedKittyKeyboardProtocol;
+    private boolean kittyKeyboardProtocol;
+    private boolean requestedModifyOtherKeys;
+    private boolean modifyOtherKeys;
+    private boolean requestedWin32InputMode;
+    private boolean win32InputMode;
 
     @SuppressWarnings("WeakerAccess")
     protected ANSITerminal(
@@ -224,6 +233,15 @@ public abstract class ANSITerminal extends StreamBasedTerminal implements Extend
             this.mouseCaptureMode = requestedMouseCaptureMode;
             updateMouseCaptureMode(this.mouseCaptureMode, 'h');
         }
+        if (requestedModifyOtherKeys) {
+            updateModifyOtherKeys(true);
+        }
+        if (requestedKittyKeyboardProtocol) {
+            updateKittyKeyboardProtocol(true);
+        }
+        if (requestedWin32InputMode) {
+            updateWin32InputMode(true);
+        }
         flush();
         inPrivateMode = true;
     }
@@ -239,10 +257,23 @@ public abstract class ANSITerminal extends StreamBasedTerminal implements Extend
             updateMouseCaptureMode(this.mouseCaptureMode, 'l');
             this.mouseCaptureMode = null;
         }
+        boolean win32InputReportsPending = win32InputMode;
+        if (win32InputMode) {
+            updateWin32InputMode(false);
+        }
+        if (kittyKeyboardProtocol) {
+            updateKittyKeyboardProtocol(false);
+        }
+        if (modifyOtherKeys) {
+            updateModifyOtherKeys(false);
+        }
         writeCSISequenceToTerminal((byte) '?', (byte) '2', (byte) '0', (byte) '0', (byte) '4', (byte) 'l');
         writeCSISequenceToTerminal((byte) '?', (byte) '1', (byte) '0', (byte) '4', (byte) '9', (byte) 'l');
         flush();
         inPrivateMode = false;
+        if (win32InputReportsPending) {
+            consumeWin32InputReports();
+        }
     }
 
     @Override
@@ -385,6 +416,101 @@ public abstract class ANSITerminal extends StreamBasedTerminal implements Extend
             this.mouseCaptureMode = requestedMouseCaptureMode;
             updateMouseCaptureMode(this.mouseCaptureMode, 'h');
         }
+    }
+
+    /**
+     * Asks the terminal to report modified keys that the legacy encoding cannot tell apart,
+     * such as Shift+Enter, through the kitty keyboard protocol. While the terminal is in
+     * private mode, the flags "disambiguate escape codes" and "report alternate keys" are
+     * pushed onto the terminal's keyboard mode stack; leaving private mode pops them again.
+     * Terminals without the protocol ignore the request. The reports are decoded by
+     * {@link com.googlecode.lanterna.input.ExtendedKeyCharacterPattern}, and keys that also
+     * have a legacy encoding decode to the same KeyStroke as before. Off by default.
+     *
+     * @param enabled whether to request the kitty keyboard protocol
+     * @throws IOException if the terminal is in private mode and the request cannot be written
+     */
+    public void setKittyKeyboardProtocol(boolean enabled) throws IOException {
+        requestedKittyKeyboardProtocol = enabled;
+        if (inPrivateMode && kittyKeyboardProtocol != enabled) {
+            updateKittyKeyboardProtocol(enabled);
+            flush();
+        }
+    }
+
+    /**
+     * Asks the terminal to report modified keys that the legacy encoding cannot tell apart,
+     * such as Shift+Enter, through xterm's modifyOtherKeys at level 1. The mode is set while
+     * the terminal is in private mode and reset when it leaves. Terminals without the mode
+     * ignore the request. The reports are decoded by
+     * {@link com.googlecode.lanterna.input.ExtendedKeyCharacterPattern}. Off by default.
+     *
+     * @param enabled whether to request modifyOtherKeys
+     * @throws IOException if the terminal is in private mode and the request cannot be written
+     */
+    public void setModifyOtherKeys(boolean enabled) throws IOException {
+        requestedModifyOtherKeys = enabled;
+        if (inPrivateMode && modifyOtherKeys != enabled) {
+            updateModifyOtherKeys(enabled);
+            flush();
+        }
+    }
+
+    /**
+     * Asks Windows Terminal and the Windows console host to report every key as a
+     * win32-input-mode sequence. Under the console host, for example in WSL, this is how
+     * Shift+Enter reaches an application, and characters typed with AltGr stay text. The
+     * mode is set while the terminal is in private mode and reset when it leaves; leaving
+     * first reads the reports of keys pressed until then, so they do not reach the shell as
+     * text. Other terminals ignore the request. The reports are decoded by
+     * {@link com.googlecode.lanterna.input.Win32InputCharacterPattern}. Off by default.
+     *
+     * @param enabled whether to request win32-input-mode
+     * @throws IOException if the terminal is in private mode and the request cannot be written
+     */
+    public void setWin32InputMode(boolean enabled) throws IOException {
+        requestedWin32InputMode = enabled;
+        if (inPrivateMode && win32InputMode != enabled) {
+            updateWin32InputMode(enabled);
+            flush();
+        }
+    }
+
+    private void updateKittyKeyboardProtocol(boolean enabled) throws IOException {
+        if (enabled) {
+            // CSI > 5 u: push flags 1 (disambiguate escape codes) + 4 (report alternate keys)
+            writeCSISequenceToTerminal((byte) '>', (byte) '5', (byte) 'u');
+        } else {
+            // CSI < u: pop the flags pushed above
+            writeCSISequenceToTerminal((byte) '<', (byte) 'u');
+        }
+        kittyKeyboardProtocol = enabled;
+    }
+
+    private void updateModifyOtherKeys(boolean enabled) throws IOException {
+        if (enabled) {
+            // CSI > 4 ; 1 m: modifyOtherKeys level 1
+            writeCSISequenceToTerminal((byte) '>', (byte) '4', (byte) ';', (byte) '1', (byte) 'm');
+        } else {
+            // CSI > 4 m: back to the terminal's default
+            writeCSISequenceToTerminal((byte) '>', (byte) '4', (byte) 'm');
+        }
+        modifyOtherKeys = enabled;
+    }
+
+    private void updateWin32InputMode(boolean enabled) throws IOException {
+        // CSI ? 9001 h / l: win32-input-mode
+        writeCSISequenceToTerminal((byte) '?', (byte) '9', (byte) '0', (byte) '0', (byte) '1', (byte) (enabled ? 'h' : 'l'));
+        win32InputMode = enabled;
+    }
+
+    // Keys pressed before the console host left win32-input-mode still arrive as reports. It
+    // answers a cursor position request after them, so reading input up to that answer
+    // consumes the reports here instead of leaving them to the shell as text.
+    private void consumeWin32InputReports() throws IOException {
+        resetMemorizedCursorPosition();
+        reportPosition();
+        waitForCursorPositionReport(WIN32_INPUT_REPORTS_TIMEOUT_MILLIS);
     }
 
     @Override

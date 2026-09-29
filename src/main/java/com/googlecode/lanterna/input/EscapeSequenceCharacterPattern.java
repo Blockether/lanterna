@@ -163,7 +163,7 @@ public class EscapeSequenceCharacterPattern implements CharacterPattern {
      */
     protected KeyStroke getKeyStrokeRaw(char first,int num1,int num2,char last,boolean bEsc) {
         KeyType kt;
-        boolean bPuttyCtrl = false, bRealF3 = false;
+        boolean bPuttyCtrl = false, bRealF3 = false, bKonsoleShiftReturn = false;
         if (last == '~' && stdMap.containsKey(num1)) {
             kt = stdMap.get(num1);
         } else if (finMap.containsKey(last)) {
@@ -176,6 +176,11 @@ public class EscapeSequenceCharacterPattern implements CharacterPattern {
                 // ^[OR is a "real" F3 Key, ^[[1;1R may be F3 or a CursorLocation report!
                 if (last == 'R') { bRealF3 = true; }
             }
+        } else if (first == 'O' && last == 'M') {
+            // Konsole sends Esc O M for Shift+Return; keypad Enter sends it only in
+            // application keypad mode, which lanterna never enables.
+            kt = KeyType.Enter;
+            bKonsoleShiftReturn = true;
         } else {
             kt = null; // unknown key.
         }
@@ -187,6 +192,10 @@ public class EscapeSequenceCharacterPattern implements CharacterPattern {
         if (bPuttyCtrl) {
             if (mods >= 0) { mods |= CTRL; }
             else { mods = CTRL; }
+        }
+        if (bKonsoleShiftReturn) {
+            if (mods >= 0) { mods |= SHIFT; }
+            else { mods = SHIFT; }
         }
         if (bRealF3) {
             mods = -1;

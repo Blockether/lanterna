@@ -11,6 +11,28 @@
 > and a complete HTML terminal backend. It remains a drop-in replacement for
 > `com.googlecode.lanterna:lanterna:3.1.5` and adds focused public packages.
 
+### `3.1.5-vis.55`
+
+- Decode Shift+Enter and other modified keys that terminals report as CSI u
+  (`ESC [ 13 ; 2 u`, kitty keyboard protocol, tmux `csi-u`) or through xterm's
+  modifyOtherKeys (`ESC [ 27 ; 2 ; 13 ~`, WezTerm, tmux), plus Konsole's `ESC O M`,
+  as `KeyType.Enter` with Shift. These reports used to arrive as Alt+`[` followed by
+  typed text. `ExtendedKeyCharacterPattern` in `DefaultKeyDecodingProfile` decodes
+  keys that also have a legacy encoding to the same `KeyStroke` as before, and
+  consumes key releases and keys without a `KeyType` as `KeyType.Unknown`.
+- Add `ANSITerminal.setKittyKeyboardProtocol(boolean)` and
+  `ANSITerminal.setModifyOtherKeys(boolean)`, both off by default. They ask the
+  terminal for these reports while it is in private mode and restore it before
+  leaving the alternate screen.
+- Add `ANSITerminal.setWin32InputMode(boolean)`, off by default, and
+  `Win32InputCharacterPattern` in `DefaultKeyDecodingProfile`. Windows Terminal and
+  its console host then report every key event as `ESC [ Vk ; Sc ; Uc ; Kd ; Cs ; Rc _`,
+  which lets applications under the console host, such as WSL, tell Shift+Enter from
+  Enter. Keys decode to the same `KeyStroke` as their legacy bytes, AltGr characters
+  stay text, and `InputDecoder` consumes key releases and lone modifier keys without
+  returning a `KeyStroke`. Leaving private mode reads the reports of keys pressed
+  until then, so they do not reach the shell as text.
+
 ### `3.1.5-vis.54`
 
 - Add explicit breaks to `ParagraphLayout.prepare`: offsets inside a word where a

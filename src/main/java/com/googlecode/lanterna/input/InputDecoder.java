@@ -31,6 +31,12 @@ import java.util.*;
  * @author Martin, Andreas
  */
 public class InputDecoder {
+    /**
+     * Matched by a {@link CharacterPattern} for input that carries no key stroke, such as a key
+     * release report. The decoder consumes that input and never returns this key stroke.
+     */
+    static final KeyStroke IGNORED = new KeyStroke(KeyType.Unknown);
+
     private final Reader source;
     private final List<CharacterPattern> bytePatterns;
     private final List<Character> currentMatching;
@@ -114,6 +120,15 @@ public class InputDecoder {
      * @throws IOException If there was an I/O error when reading from the input stream
      */
     public synchronized KeyStroke getNextCharacter(boolean blockingIO) throws IOException {
+        while (true) {
+            KeyStroke keyStroke = decodeNextCharacter(blockingIO);
+            if (keyStroke != IGNORED) {
+                return keyStroke;
+            }
+        }
+    }
+
+    private KeyStroke decodeNextCharacter(boolean blockingIO) throws IOException {
 
         KeyStroke bestMatch = null;
         int bestLen = 0;

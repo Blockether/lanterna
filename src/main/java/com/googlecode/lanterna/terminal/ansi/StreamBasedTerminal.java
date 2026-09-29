@@ -181,10 +181,20 @@ public abstract class StreamBasedTerminal extends AbstractTerminal {
      * @throws IOException If there was an I/O error
      */
     synchronized TerminalPosition waitForCursorPositionReport() throws IOException {
+        return waitForCursorPositionReport(5000);
+    }
+
+    /**
+     * Like {@link #waitForCursorPositionReport()}, but gives up after {@code timeoutMillis}.
+     * @param timeoutMillis How long to wait for the report
+     * @return Current position of the cursor, or null if the terminal didn't report it in time.
+     * @throws IOException If there was an I/O error
+     */
+    synchronized TerminalPosition waitForCursorPositionReport(long timeoutMillis) throws IOException {
         long startTime = System.currentTimeMillis();
         TerminalPosition cursorPosition = lastReportedCursorPosition;
         while(cursorPosition == null) {
-            if(System.currentTimeMillis() - startTime > 5000) {
+            if(System.currentTimeMillis() - startTime > timeoutMillis) {
                 //throw new IllegalStateException("Terminal didn't send any position report for 5 seconds, please file a bug with a reproduce!");
                 return null;
             }

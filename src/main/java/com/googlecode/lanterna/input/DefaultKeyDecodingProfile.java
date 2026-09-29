@@ -50,6 +50,8 @@ public class DefaultKeyDecodingProfile implements KeyDecodingProfile {
                     new BasicCharacterPattern(new KeyStroke(KeyType.PasteStart), ESC_CODE, '[', '2', '0', '0', '~'),
                     new BasicCharacterPattern(new KeyStroke(KeyType.PasteEnd), ESC_CODE, '[', '2', '0', '1', '~'),
                     new EscapeSequenceCharacterPattern(),
+                    new ExtendedKeyCharacterPattern(),
+                    new Win32InputCharacterPattern(),
                     new NormalCharacterPattern(),
                     new CtrlAndCharacterPattern(),
                     new CtrlAltAndCharacterPattern(),
