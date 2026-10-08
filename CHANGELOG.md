@@ -11,6 +11,32 @@
 > and a complete HTML terminal backend. It remains a drop-in replacement for
 > `com.googlecode.lanterna:lanterna:3.1.5` and adds focused public packages.
 
+### `3.1.5-vis.56`
+
+- Port the opentui width rules. The new `UnicodeWidth` class segments graphemes and
+  measures cells with the opentui Unicode tables. Its global `WidthMethod` is
+  `WCWIDTH`, `UNICODE`, `NO_ZWJ` or `UNICODE_WIDE`, and `UNICODE` is the default.
+  `TextCharacter` and `TerminalTextUtils.isCharDoubleWidth` use it.
+- Remove the old width options: `TextCharacter.appleTerminalWidths()`,
+  `TextCharacter.setAppleTerminalWidths(boolean)`, the
+  `lanterna.eastAsianAmbiguousWide` property and
+  `TerminalTextUtils.isCharEastAsianWide`. Use `UnicodeWidth.setWidthMethod` instead.
+- Add `TerminalCapabilities`, a port of the opentui terminal detection. It reads the
+  same environment variables, including `OPENTUI_FORCE_WCWIDTH`,
+  `OPENTUI_FORCE_UNICODE`, `OPENTUI_FORCE_NOZWJ` and `OPENTUI_FORCE_EXPLICIT_WIDTH`.
+  It sends the same queries and parses the replies to XTVERSION, DECRQM 2027 and the
+  OSC 66 cursor position probes.
+- Add `ANSITerminal.setTerminalCapabilities(TerminalCapabilities)`, off by default.
+  `enterPrivateMode()` then sends the queries, waits for the replies at most
+  `setCapabilityQueryTimeout(long)` milliseconds and sets the detected width method.
+  It turns on grapheme cluster mode 2027 when opentui does. The terminal replies do
+  not reach the application.
+- Add `KeyType.TerminalResponse` and `TerminalResponsePattern` for mode reports,
+  primary device attributes and XTVERSION replies.
+- `TerminalScreen` writes every non-ASCII cell like the opentui renderer: with an
+  OSC 66 explicit width, or followed by a cursor move when the terminal needs
+  explicit cursor positioning. A new width method paints the full screen again.
+
 ### `3.1.5-vis.55`
 
 - Decode Shift+Enter and other modified keys that terminals report as CSI u

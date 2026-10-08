@@ -105,37 +105,28 @@ public class TextCharacterTest {
     }
 
     @Test
-    public void appleTerminalNarrowsVs16Emoji() {
-        // Apple Terminal.app ignores the VS-16 emoji-presentation selector and
-        // paints the base glyph at its TEXT width (measured on Terminal.app v466:
-        // U+26A0 U+2714 U+2611 U+25B6 U+23FA U+2764 + VS-16 = 1 cell; U+2B50 + VS-16
-        // = 2; genuine emoji U+2705, U+1F4C4 = 2). Under the Apple width mode
-        // isDoubleWidth() must follow the base glyph, not the VS-16 selector.
-        boolean prev = TextCharacter.appleTerminalWidths();
+    public void doubleWidthFollowsTheActiveWidthMethod() {
+        UnicodeWidth.WidthMethod previous = UnicodeWidth.getWidthMethod();
         try {
-            TextCharacter.setAppleTerminalWidths(true);
-            // VS-16 on text-default BMP bases -> NARROW (base is text/geometric).
-            assertFalse(TextCharacter.fromString("⚠️")[0].isDoubleWidth()); // warning
-            assertFalse(TextCharacter.fromString("✔️")[0].isDoubleWidth()); // heavy check
-            assertFalse(TextCharacter.fromString("☑️")[0].isDoubleWidth()); // ballot box + check
-            assertFalse(TextCharacter.fromString("▶️")[0].isDoubleWidth()); // play triangle
-            assertFalse(TextCharacter.fromString("⏺️")[0].isDoubleWidth()); // record circle
-            assertFalse(TextCharacter.fromString("❤️")[0].isDoubleWidth()); // red heart
-            // VS-16 on an emoji-presentation BMP base stays WIDE (star is 2 cells).
-            assertTrue(TextCharacter.fromString("⭐️")[0].isDoubleWidth());  // star
-            // VS-15 (text presentation) always narrow.
-            assertFalse(TextCharacter.fromString("☑︎")[0].isDoubleWidth()); // ballot box + VS-15
-            // Genuine emoji (dedicated code points, no VS-16) stay WIDE.
-            assertTrue(TextCharacter.fromString("✅")[0].isDoubleWidth());        // check mark button
-            assertTrue(TextCharacter.fromString("📄")[0].isDoubleWidth());  // page facing up
-            assertFalse(TextCharacter.fromString("M")[0].isDoubleWidth());            // plain ASCII
+            // OpenTUI wcwidth: ZWJ sequences keep one cluster, widths add up.
+            UnicodeWidth.setWidthMethod(UnicodeWidth.WidthMethod.WCWIDTH);
+            TextCharacter[] family = TextCharacter.fromString("👨\u200D👩");
+            assertEquals(1, family.length);
+            assertTrue(family[0].isDoubleWidth());
+            assertFalse(TextCharacter.fromString("é")[0].isDoubleWidth());
 
-            // The non-Apple contract is unchanged: VS-16 stays WIDE.
-            TextCharacter.setAppleTerminalWidths(false);
-            assertTrue(TextCharacter.fromString("⚠️")[0].isDoubleWidth());  // warning
-            assertTrue(TextCharacter.fromString("☑️")[0].isDoubleWidth());  // ballot box + check
+            // OpenTUI unicode_wide: a visible extension makes the cluster wide.
+            UnicodeWidth.setWidthMethod(UnicodeWidth.WidthMethod.UNICODE_WIDE);
+            assertTrue(TextCharacter.fromString("कि")[0].isDoubleWidth());
+
+            // The cached width is recomputed after the method changes.
+            UnicodeWidth.setWidthMethod(UnicodeWidth.WidthMethod.UNICODE);
+            TextCharacter syllable = TextCharacter.fromString("कि")[0];
+            assertFalse(syllable.isDoubleWidth());
+            UnicodeWidth.setWidthMethod(UnicodeWidth.WidthMethod.UNICODE_WIDE);
+            assertTrue(syllable.isDoubleWidth());
         } finally {
-            TextCharacter.setAppleTerminalWidths(prev);
+            UnicodeWidth.setWidthMethod(previous);
         }
     }
 }

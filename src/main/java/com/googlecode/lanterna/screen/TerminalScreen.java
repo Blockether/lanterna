@@ -24,6 +24,8 @@ import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.input.KeyType;
 import com.googlecode.lanterna.terminal.Terminal;
 import com.googlecode.lanterna.terminal.TerminalResizeListener;
+import com.googlecode.lanterna.terminal.ansi.ANSITerminal;
+import com.googlecode.lanterna.terminal.ansi.TerminalCapabilities;
 
 import java.io.IOException;
 import java.util.EnumSet;
@@ -40,6 +42,7 @@ public class TerminalScreen extends AbstractScreen {
     private boolean isStarted;
     private boolean fullRedrawHint;
     private ScrollHint scrollHint;
+    private UnicodeWidth.WidthMethod paintedWidthMethod;
 
     /**
      * Creates a new Screen on top of a supplied terminal, will query the terminal for its size. The screen is initially
@@ -126,7 +129,9 @@ public class TerminalScreen extends AbstractScreen {
         if(!isStarted) {
             return;
         }
-        if((refreshType == RefreshType.AUTOMATIC && fullRedrawHint) || refreshType == RefreshType.COMPLETE) {
+        // A new width method changes the cell widths, so the screen must paint every cell again
+        if((refreshType == RefreshType.AUTOMATIC && fullRedrawHint) || refreshType == RefreshType.COMPLETE
+                || paintedWidthMethod != UnicodeWidth.getWidthMethod()) {
             refreshFull();
             fullRedrawHint = false;
         }
@@ -205,16 +210,20 @@ public class TerminalScreen extends AbstractScreen {
         private int runColumn = -1;
         private int runRow = -1;
         private int runWidth = 0;
+        private boolean runGrapheme = false;
+        private final TerminalCapabilities capabilities = graphemeCapabilities();
 
         void emit(int column, int row, TextCharacter character) throws IOException {
             int width = character.isDoubleWidth() ? 2 : 1;
-            if(runStyle != null && row == runRow && column == runColumn + runWidth
+            boolean grapheme = capabilities != null && isGrapheme(character.getCharacterString());
+            if(!grapheme && !runGrapheme && runStyle != null && row == runRow && column == runColumn + runWidth
                     && character.styleEquals(runStyle)) {
                 run.append(character.getCharacterString());
                 runWidth += width;
                 return;
             }
             flushRun();
+            runGrapheme = grapheme;
             runStyle = character;
             runColumn = column;
             runRow = row;
@@ -257,12 +266,59 @@ public class TerminalScreen extends AbstractScreen {
                 }
                 currentSGR = wantedSGR;
             }
-            getTerminal().putString(run.toString());
+            if(runGrapheme) {
+                putGrapheme(capabilities, run.toString(), runWidth, runColumn, runRow);
+            }
+            else {
+                getTerminal().putString(run.toString());
+            }
             cursorColumn = runColumn + runWidth;
             cursorRow = runRow;
             run.setLength(0);
             runStyle = null;
             runWidth = 0;
+        }
+    }
+
+    /**
+     * @return Capabilities if the terminal needs the opentui grapheme output (explicit width or explicit cursor
+     * positioning), else {@code null}
+     */
+    private TerminalCapabilities graphemeCapabilities() {
+        if(!(terminal instanceof ANSITerminal)) {
+            return null;
+        }
+        TerminalCapabilities capabilities = ((ANSITerminal) terminal).getTerminalCapabilities();
+        if(capabilities == null || !(capabilities.isExplicitWidth() || capabilities.isExplicitCursorPositioning())) {
+            return null;
+        }
+        return capabilities;
+    }
+
+    /** opentui stores every non-ASCII cell as a grapheme. */
+    private static boolean isGrapheme(String text) {
+        for(int i = 0; i < text.length(); i++) {
+            if(text.charAt(i) > 0x7f) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Writes one grapheme cell like the opentui renderer: with an OSC 66 explicit width, or else followed by a cursor
+     * move to the next cell if the terminal needs explicit cursor positioning.
+     */
+    private void putGrapheme(TerminalCapabilities capabilities, String text, int width, int column, int row)
+            throws IOException {
+        if(capabilities.isExplicitWidth()) {
+            getTerminal().putString("\033]66;w=" + width + ";" + text + "\033\\");
+            return;
+        }
+        getTerminal().putString(text);
+        // graphemeCapabilities() gives only terminals with explicit width or explicit cursor positioning
+        if(column + width < getTerminalSize().getColumns()) {
+            getTerminal().setCursorPosition(column + width, row);
         }
     }
 
@@ -343,6 +399,8 @@ public class TerminalScreen extends AbstractScreen {
         getTerminal().resetColorAndSGR();
         scrollHint = null; // discard any scroll hint for full refresh
 
+        paintedWidthMethod = UnicodeWidth.getWidthMethod();
+        TerminalCapabilities capabilities = graphemeCapabilities();
         EnumSet<SGR> currentSGR = EnumSet.noneOf(SGR.class);
         TextColor currentForegroundColor = TextColor.ANSI.DEFAULT;
         TextColor currentBackgroundColor = TextColor.ANSI.DEFAULT;
@@ -377,7 +435,13 @@ public class TerminalScreen extends AbstractScreen {
                     getTerminal().setCursorPosition(x, y);
                     currentColumn = x;
                 }
-                getTerminal().putString(newCharacter.getCharacterString());
+                String text = newCharacter.getCharacterString();
+                if(capabilities != null && isGrapheme(text)) {
+                    putGrapheme(capabilities, text, newCharacter.isDoubleWidth() ? 2 : 1, x, y);
+                }
+                else {
+                    getTerminal().putString(text);
+                }
                 if(newCharacter.isDoubleWidth()) {
                     // Double-width characters take up two columns
                     currentColumn += 2;

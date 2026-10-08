@@ -20,7 +20,6 @@ package com.googlecode.lanterna;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.LinkedList;
 import java.util.List;
 
@@ -126,79 +125,15 @@ public class TerminalTextUtils {
     }
 
     /**
-     * Checks if a character is expected to be taking up two columns if printed to a terminal. This will generally be
-     * {@code true} for CJK (Chinese, Japanese and Korean) characters. Notice that emoji generally takes up more than a
-     * single char and can't be tested properly with this method.
+     * Checks if a character takes two columns when printed to a terminal. The width comes from
+     * {@link UnicodeWidth#codePointWidth(int)}, the OpenTUI width rules. Emoji generally take more
+     * than one char, so use {@link TextCharacter#isDoubleWidth()} for a whole grapheme cluster.
      * @param c Character to test if it's double-width when printed to a terminal
      * @return {@code true} if this character is expected to be taking up two columns when printed to the terminal,
      * otherwise {@code false}
      */
     public static boolean isCharDoubleWidth(final char c) {
-        // STANDARD WIDTH ONLY: CJK plus the Unicode East-Asian Wide/Fullwidth
-        // table. Geometric / symbol glyphs that are EAW=Ambiguous or EAW=Neutral
-        // — ● ○ ◯ ◎ ◐ ◑ (circle status dots), ▶ ◀ (media triangles), ⚠ (warning
-        // sign) and kin — are ONE column on standard/modern terminals. They were
-        // briefly force-widened here, but that OVER-counts the row on terminals
-        // that render them narrow, pushing following cells and borders one column
-        // out of alignment (e.g. a focused tab's "● " prefix shoving its trailing
-        // │ left). Genuine emoji are still handled wide in
-        // TextCharacter.isDoubleWidth (emoji-presentation table + astral/length>1).
-        // Terminals configured emoji/ambiguous-wide can opt back in with
-        // -Dlanterna.eastAsianAmbiguousWide=true.
-        return isCharCJK(c) || isCharEastAsianWide(c);
-    }
-
-    /**
-     * True for BMP code points whose Unicode East-Asian-Width is Wide (W) or
-     * Fullwidth (F) — they occupy TWO terminal columns. Generated from Unicode
-     * 15.1.0 {@code EastAsianWidth.txt} (W + F rows, restricted to the BMP; SMP
-     * wide code points arrive as surrogate pairs and are handled by the
-     * {@code length() > 1} grapheme branch in {@link TextCharacter#isDoubleWidth()}).
-     *
-     * This is the single source of truth for genuine double-width, so the
-     * measured width and the painted width agree. W/F symbols that live OUTSIDE
-     * the CJK Unicode blocks — angle brackets (U+2329..U+232A), Yi, Bopomofo,
-     * CJK compatibility forms, vertical forms — used to fall through
-     * {@link #isCharCJK(char)} and undercount by one column, drifting every
-     * following cell (the "scrollbar teeth" / sticky-residue symptom).
-     *
-     * East-Asian *Ambiguous* (A) is deliberately NOT here: it is
-     * terminal-dependent and resolved (default narrow) in {@code TextCharacter}.
-     */
-    public static boolean isCharEastAsianWide(final char c) {
-        return c >= 0x1100 && c <= EAW_WIDE_MAX && EAW_WIDE.get(c);
-    }
-
-    private static final int EAW_WIDE_MAX = 0xFFE6;
-
-    /** Inclusive (lo, hi) range pairs of BMP EAW=W / EAW=F code points (Unicode 15.1.0). */
-    private static final int[] EAW_WIDE_RANGES = {
-        0x1100, 0x115F, 0x231A, 0x231B, 0x2329, 0x232A, 0x23E9, 0x23EC,
-        0x23F0, 0x23F0, 0x23F3, 0x23F3, 0x25FD, 0x25FE, 0x2614, 0x2615,
-        0x2648, 0x2653, 0x267F, 0x267F, 0x2693, 0x2693, 0x26A1, 0x26A1,
-        0x26AA, 0x26AB, 0x26BD, 0x26BE, 0x26C4, 0x26C5, 0x26CE, 0x26CE,
-        0x26D4, 0x26D4, 0x26EA, 0x26EA, 0x26F2, 0x26F3, 0x26F5, 0x26F5,
-        0x26FA, 0x26FA, 0x26FD, 0x26FD, 0x2705, 0x2705, 0x270A, 0x270B,
-        0x2728, 0x2728, 0x274C, 0x274C, 0x274E, 0x274E, 0x2753, 0x2755,
-        0x2757, 0x2757, 0x2795, 0x2797, 0x27B0, 0x27B0, 0x27BF, 0x27BF,
-        0x2B1B, 0x2B1C, 0x2B50, 0x2B50, 0x2B55, 0x2B55, 0x2E80, 0x2E99,
-        0x2E9B, 0x2EF3, 0x2F00, 0x2FD5, 0x2FF0, 0x303E, 0x3041, 0x3096,
-        0x3099, 0x30FF, 0x3105, 0x312F, 0x3131, 0x318E, 0x3190, 0x31E3,
-        0x31EF, 0x321E, 0x3220, 0x3247, 0x3250, 0x4DBF, 0x4E00, 0xA48C,
-        0xA490, 0xA4C6, 0xA960, 0xA97C, 0xAC00, 0xD7A3, 0xF900, 0xFAFF,
-        0xFE10, 0xFE19, 0xFE30, 0xFE52, 0xFE54, 0xFE66, 0xFE68, 0xFE6B,
-        0xFF01, 0xFF60, 0xFFE0, 0xFFE6,
-    };
-
-    /** Built once at class load from {@link #EAW_WIDE_RANGES}. */
-    private static final BitSet EAW_WIDE = buildWideBitSet();
-
-    private static BitSet buildWideBitSet() {
-        BitSet bits = new BitSet(EAW_WIDE_MAX + 1);
-        for (int i = 0; i < EAW_WIDE_RANGES.length; i += 2) {
-            bits.set(EAW_WIDE_RANGES[i], EAW_WIDE_RANGES[i + 1] + 1);
-        }
-        return bits;
+        return UnicodeWidth.codePointWidth(c) == 2;
     }
 
     /**

@@ -40,6 +40,7 @@ import java.util.Queue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.BooleanSupplier;
 
 /**
  * An abstract terminal implementing functionality for terminals using OutputStream/InputStream. You can extend from
@@ -191,12 +192,22 @@ public abstract class StreamBasedTerminal extends AbstractTerminal {
      * @throws IOException If there was an I/O error
      */
     synchronized TerminalPosition waitForCursorPositionReport(long timeoutMillis) throws IOException {
+        return readInputUntil(() -> lastReportedCursorPosition != null, timeoutMillis) ? lastReportedCursorPosition : null;
+    }
+
+    /**
+     * Reads the input until {@code done} gives {@code true} or {@code timeoutMillis} expires. Keys that arrive in this
+     * time go to the key queue, and later input calls return them.
+     * @param done Condition to wait for
+     * @param timeoutMillis How long to wait
+     * @return {@code true} if the condition became true in time
+     * @throws IOException If there was an I/O error
+     */
+    synchronized boolean readInputUntil(BooleanSupplier done, long timeoutMillis) throws IOException {
         long startTime = System.currentTimeMillis();
-        TerminalPosition cursorPosition = lastReportedCursorPosition;
-        while(cursorPosition == null) {
+        while(!done.getAsBoolean()) {
             if(System.currentTimeMillis() - startTime > timeoutMillis) {
-                //throw new IllegalStateException("Terminal didn't send any position report for 5 seconds, please file a bug with a reproduce!");
-                return null;
+                return false;
             }
             KeyStroke keyStroke = readInput(false, false);
             if(keyStroke != null) {
@@ -205,9 +216,18 @@ public abstract class StreamBasedTerminal extends AbstractTerminal {
             else {
                 try { Thread.sleep(1); } catch(InterruptedException ignored) {}
             }
-            cursorPosition = lastReportedCursorPosition;
         }
-        return cursorPosition;
+        return true;
+    }
+
+    /**
+     * Lets a subclass take a terminal reply out of the input before the application gets it.
+     * @param key Decoded input
+     * @return {@code true} if the subclass consumed the input
+     * @throws IOException If there was an I/O error
+     */
+    protected boolean consumeTerminalResponse(KeyStroke key) throws IOException {
+        return false;
     }
 
     @Override
@@ -239,6 +259,9 @@ public abstract class StreamBasedTerminal extends AbstractTerminal {
             }
             try {
                 KeyStroke key = inputDecoder.getNextCharacter(blocking);
+                if(key != null && consumeTerminalResponse(key)) {
+                    continue;
+                }
                 ScreenInfoAction report = ScreenInfoCharacterPattern.tryToAdopt(key);
                 if (lastReportedCursorPosition == null && report != null) {
                     lastReportedCursorPosition = report.getPosition();

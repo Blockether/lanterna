@@ -30,6 +30,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 
 /**
  * Class containing graphics code for ANSI compliant text terminals and terminal emulators. All the methods inside of
@@ -39,6 +40,9 @@ import java.nio.charset.Charset;
  * @author Martin
  */
 public abstract class ANSITerminal extends StreamBasedTerminal implements ExtendedTerminal {
+
+    // Sent after the capability queries: every terminal answers it, so its reply ends the wait.
+    private static final String PRIMARY_DEVICE_ATTRIBUTES_QUERY = "\033[c";
 
     // How long leaving win32-input-mode waits for the reports of keys pressed before it.
     private static final long WIN32_INPUT_REPORTS_TIMEOUT_MILLIS = 500;
@@ -52,6 +56,10 @@ public abstract class ANSITerminal extends StreamBasedTerminal implements Extend
     private boolean modifyOtherKeys;
     private boolean requestedWin32InputMode;
     private boolean win32InputMode;
+    private volatile TerminalCapabilities terminalCapabilities;
+    private volatile boolean primaryDeviceAttributesSeen;
+    private volatile boolean capabilityQueryActive;
+    private long capabilityQueryTimeoutMillis = 1000;
 
     @SuppressWarnings("WeakerAccess")
     protected ANSITerminal(
@@ -227,6 +235,12 @@ public abstract class ANSITerminal extends StreamBasedTerminal implements Extend
         if(inPrivateMode) {
             throw new IllegalStateException("Cannot call enterPrivateMode() when already in private mode");
         }
+        TerminalCapabilities capabilities = terminalCapabilities;
+        if(capabilities != null) {
+            primaryDeviceAttributesSeen = false;
+            writeToTerminal((capabilities.buildQuery() + PRIMARY_DEVICE_ATTRIBUTES_QUERY)
+                    .getBytes(StandardCharsets.US_ASCII));
+        }
         writeCSISequenceToTerminal((byte) '?', (byte) '1', (byte) '0', (byte) '4', (byte) '9', (byte) 'h');
         writeCSISequenceToTerminal((byte) '?', (byte) '2', (byte) '0', (byte) '0', (byte) '4', (byte) 'h');
         if (requestedMouseCaptureMode != null) {
@@ -242,8 +256,83 @@ public abstract class ANSITerminal extends StreamBasedTerminal implements Extend
         if (requestedWin32InputMode) {
             updateWin32InputMode(true);
         }
+        if(capabilities != null) {
+            writeDetectedFeatures(capabilities);
+        }
         flush();
         inPrivateMode = true;
+        if(capabilities != null) {
+            capabilityQueryActive = true;
+            try {
+                readInputUntil(() -> primaryDeviceAttributesSeen, capabilityQueryTimeoutMillis);
+            }
+            finally {
+                capabilityQueryActive = false;
+            }
+        }
+    }
+
+    /**
+     * Turns on terminal capability detection, as in opentui. Then {@link #enterPrivateMode()} sends the capability
+     * queries and waits for the replies, at most {@link #setCapabilityQueryTimeout(long)} milliseconds. The detected
+     * width method becomes the global {@link com.googlecode.lanterna.UnicodeWidth} method, and
+     * {@link com.googlecode.lanterna.screen.TerminalScreen} draws wide text as the terminal needs. The terminal
+     * replies are not given to the application. The queries write a space at the top-left cell of the main screen.
+     * @param capabilities Capabilities to detect, or {@code null} to turn detection off
+     */
+    public void setTerminalCapabilities(TerminalCapabilities capabilities) {
+        this.terminalCapabilities = capabilities;
+    }
+
+    /** @return Capabilities that this terminal detects, or {@code null} if detection is off */
+    public TerminalCapabilities getTerminalCapabilities() {
+        return terminalCapabilities;
+    }
+
+    /**
+     * Sets how long {@link #enterPrivateMode()} waits for the capability replies. Mode and version replies that
+     * arrive later are still processed when the application reads input. Late cursor position reports go to the
+     * application.
+     * @param timeoutMillis Timeout in milliseconds
+     */
+    public void setCapabilityQueryTimeout(long timeoutMillis) {
+        this.capabilityQueryTimeoutMillis = timeoutMillis;
+    }
+
+    @Override
+    protected boolean consumeTerminalResponse(KeyStroke key) throws IOException {
+        TerminalCapabilities capabilities = terminalCapabilities;
+        if(capabilities == null) {
+            return super.consumeTerminalResponse(key);
+        }
+        String response;
+        if(key instanceof TerminalResponse) {
+            TerminalResponse terminalResponse = (TerminalResponse) key;
+            response = terminalResponse.getSequence();
+            if(terminalResponse.isPrimaryDeviceAttributes()) {
+                primaryDeviceAttributesSeen = true;
+            }
+        }
+        else {
+            ScreenInfoAction report = ScreenInfoCharacterPattern.tryToAdopt(key);
+            // A late cursor report can answer a size query of the application, so only the wait takes them
+            if(report == null || !capabilityQueryActive || !capabilities.isAwaitingCursorPositionReports()) {
+                return false;
+            }
+            response = "\033[" + report.getPosition().getRow() + ";" + report.getPosition().getColumn() + "R";
+        }
+        capabilities.processCapabilityResponse(response);
+        writeDetectedFeatures(capabilities);
+        flush();
+        return true;
+    }
+
+    private void writeDetectedFeatures(TerminalCapabilities capabilities) throws IOException {
+        String sequence = capabilities.enableDetectedFeatures();
+        if(!sequence.isEmpty()) {
+            writeToTerminal(sequence.getBytes(StandardCharsets.US_ASCII));
+        }
+        capabilities.applyWidthMethod();
     }
 
     @Override
