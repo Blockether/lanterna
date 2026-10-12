@@ -24,6 +24,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Inline terminal image rendering — Kitty graphics protocol / iTerm2 inline
@@ -101,7 +103,10 @@ public final class TerminalImage {
             return Protocol.KITTY;
         }
         if (env.get("ITERM_SESSION_ID") != null || termProg.equals("iterm.app")) {
-            return Protocol.ITERM2;
+            // iTerm2 3.7 asks before it displays each OSC 1337 inline image, and
+            // that modal prompt takes keyboard focus from the program. iTerm2 3.6+
+            // also speaks Kitty graphics, which draws without the prompt.
+            return iterm2SpeaksKitty(env) ? Protocol.KITTY : Protocol.ITERM2;
         }
         return null;
     }
@@ -122,6 +127,29 @@ public final class TerminalImage {
     public static boolean isGraphicalTerminal(Map<String, String> env) {
         return detectCapabilities(env) != null;
     }
+
+    /**
+     * Whether the iTerm2 in {@code env} is 3.6 or later and so speaks Kitty
+     * graphics. An unknown version keeps the OSC 1337 protocol.
+     */
+    private static boolean iterm2SpeaksKitty(Map<String, String> env) {
+        String version = null;
+        if (lower(env.get("TERM_PROGRAM")).equals("iterm.app")) {
+            version = env.get("TERM_PROGRAM_VERSION");
+        }
+        if (version == null && lower(env.get("LC_TERMINAL")).equals("iterm2")) {
+            version = env.get("LC_TERMINAL_VERSION");
+        }
+        Matcher m = version == null ? null : ITERM2_VERSION.matcher(version);
+        if (m == null || !m.find()) {
+            return false;
+        }
+        int major = Integer.parseInt(m.group(1));
+        int minor = Integer.parseInt(m.group(2));
+        return major > 3 || (major == 3 && minor >= 6);
+    }
+
+    private static final Pattern ITERM2_VERSION = Pattern.compile("^(\\d{1,4})\\.(\\d{1,4})");
 
     private static String lower(String s) {
         return s == null ? "" : s.toLowerCase();

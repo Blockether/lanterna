@@ -11,6 +11,13 @@
 > and a complete HTML terminal backend. It remains a drop-in replacement for
 > `com.googlecode.lanterna:lanterna:3.1.5` and adds focused public packages.
 
+### `3.1.5-vis.57`
+
+- Use Kitty graphics in iTerm2 3.6 and later. iTerm2 3.7 asks before it displays
+  each OSC 1337 inline image, and the modal prompt takes keyboard input from the
+  program. `TerminalImage.detectCapabilities` reads `TERM_PROGRAM_VERSION` or
+  `LC_TERMINAL_VERSION`. An older or unknown iTerm2 keeps OSC 1337.
+
 ### `3.1.5-vis.56`
 
 - Port the opentui width rules. The new `UnicodeWidth` class segments graphemes and

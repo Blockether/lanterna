@@ -62,6 +62,27 @@ public class TerminalImageTest {
     public void iterm2Detected() {
         assertEquals(Protocol.ITERM2, TerminalImage.detectCapabilities(env("ITERM_SESSION_ID", "w0")));
         assertEquals(Protocol.ITERM2, TerminalImage.detectCapabilities(env("TERM_PROGRAM", "iTerm.app")));
+        assertEquals(Protocol.ITERM2, TerminalImage.detectCapabilities(
+                env("TERM_PROGRAM", "iTerm.app", "TERM_PROGRAM_VERSION", "3.5.14")));
+        assertEquals(Protocol.ITERM2, TerminalImage.detectCapabilities(
+                env("TERM_PROGRAM", "iTerm.app", "TERM_PROGRAM_VERSION", "unknown")));
+    }
+
+    // iTerm2 3.7 asks before it displays each OSC 1337 inline image. The modal
+    // prompt takes keyboard focus from the TUI, so iTerm2 3.6+ gets Kitty graphics.
+    @Test
+    public void modernIterm2UsesKittyGraphics() {
+        assertEquals(Protocol.KITTY, TerminalImage.detectCapabilities(
+                env("TERM_PROGRAM", "iTerm.app", "TERM_PROGRAM_VERSION", "3.6.0")));
+        assertEquals(Protocol.KITTY, TerminalImage.detectCapabilities(
+                env("TERM_PROGRAM", "iTerm.app", "TERM_PROGRAM_VERSION", "3.7.0beta9")));
+        assertEquals(Protocol.KITTY, TerminalImage.detectCapabilities(
+                env("ITERM_SESSION_ID", "w0", "TERM_PROGRAM", "iTerm.app",
+                        "TERM_PROGRAM_VERSION", "3.7.20261012-nightly")));
+        assertEquals(Protocol.KITTY, TerminalImage.detectCapabilities(
+                env("ITERM_SESSION_ID", "w0", "LC_TERMINAL", "iTerm2", "LC_TERMINAL_VERSION", "3.7.1")));
+        assertEquals(Protocol.KITTY, TerminalImage.detectCapabilities(
+                env("TERM_PROGRAM", "iTerm.app", "TERM_PROGRAM_VERSION", "4.0.0")));
     }
 
     @Test
