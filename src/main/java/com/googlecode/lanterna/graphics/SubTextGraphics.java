@@ -49,8 +49,27 @@ class SubTextGraphics extends AbstractTextGraphics {
                 rowIndex < 0 || rowIndex >= writableArea.getRows()) {
             return this;
         }
-        TerminalPosition projectedPosition = project(columnIndex, rowIndex);
-        underlyingTextGraphics.setCharacter(projectedPosition, textCharacter);
+        // Pass the projected cell as ints: a position object per cell and nesting level was
+        // the main allocation in a full-screen fill through nested views.
+        underlyingTextGraphics.setCharacter(topLeft.getColumn() + columnIndex, topLeft.getRow() + rowIndex, textCharacter);
+        return this;
+    }
+
+    @Override
+    public TextGraphics fillRectangle(TerminalPosition rectangleTopLeft, TerminalSize size, TextCharacter character) {
+        // A double-width fill depends on the requested right edge, so only single-width fills
+        // are clipped here and passed down as one rectangle instead of one write per cell.
+        if(character.isDoubleWidth()) {
+            return super.fillRectangle(rectangleTopLeft, size, character);
+        }
+        int left = Math.max(0, rectangleTopLeft.getColumn());
+        int top = Math.max(0, rectangleTopLeft.getRow());
+        int right = Math.min(writableAreaSize.getColumns(), rectangleTopLeft.getColumn() + size.getColumns());
+        int bottom = Math.min(writableAreaSize.getRows(), rectangleTopLeft.getRow() + size.getRows());
+        if(left >= right || top >= bottom) {
+            return this;
+        }
+        underlyingTextGraphics.fillRectangle(project(left, top), new TerminalSize(right - left, bottom - top), character);
         return this;
     }
 

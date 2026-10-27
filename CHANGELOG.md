@@ -11,6 +11,15 @@
 > and a complete HTML terminal backend. It remains a drop-in replacement for
 > `com.googlecode.lanterna:lanterna:3.1.5` and adds focused public packages.
 
+### `3.1.5-vis.58`
+
+- Make fills through nested `TextGraphics` views faster. A `SubTextGraphics` view clips
+  a single-width `fillRectangle` once and passes the rectangle to its parent. It no
+  longer writes one cell at a time through each level. A double-width fill keeps the
+  old per-cell path, because its right edge depends on the requested size.
+- Pass projected cells to the parent view as column and row values. A write no longer
+  creates a `TerminalPosition` at each nesting level.
+
 ### `3.1.5-vis.57`
 
 - Use Kitty graphics in iTerm2 3.6 and later. iTerm2 3.7 asks before it displays
