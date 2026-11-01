@@ -152,6 +152,45 @@ public class BasicTextImage implements TextImage {
         }
     }
 
+    /**
+     * Fills a rectangle with one character, with the same result as one {@link #setCharacterAt(int, int, TextCharacter)}
+     * call per cell in row order, as {@link DefaultShapeRenderer#fillRectangle} does. Cells outside the image are
+     * skipped. A single-width character fills each clipped row with one array fill. A double-width character keeps the
+     * per-cell path, because each cell changes its neighbours.
+     * @param column Column of the top-left corner, can be negative
+     * @param row Row of the top-left corner, can be negative
+     * @param columns Width of the rectangle
+     * @param rows Height of the rectangle
+     * @param character Character to fill the rectangle with
+     */
+    public void fillRectangle(int column, int row, int columns, int rows, TextCharacter character) {
+        if(character == null) {
+            throw new IllegalArgumentException("Cannot call BasicTextImage.fillRectangle(..) with null character");
+        }
+        if(character.isDoubleWidth()) {
+            for(int y = 0; y < rows; y++) {
+                for(int x = 0; x < columns; x += 2) {
+                    // Don't put a double-width character at the right edge of the area
+                    setCharacterAt(column + x, row + y, x + 1 == columns ? character.withCharacter(' ') : character);
+                }
+            }
+            return;
+        }
+        int width = buffer.length == 0 ? 0 : buffer[0].length;
+        int left = Math.max(0, column);
+        int top = Math.max(0, row);
+        int right = (int) Math.min(width, (long) column + columns);
+        int bottom = (int) Math.min(buffer.length, (long) row + rows);
+        for(int y = top; y < bottom && left < right; y++) {
+            TextCharacter[] line = buffer[y];
+            // Only the first cell can follow a double-width character; later cells follow the fill character
+            if(left > 0 && line[left - 1].isDoubleWidth()) {
+                line[left - 1] = line[left - 1].withCharacter(' ');
+            }
+            Arrays.fill(line, left, right, character);
+        }
+    }
+
     @Override
     public TextCharacter getCharacterAt(TerminalPosition position) {
         if(position == null) {
@@ -277,6 +316,12 @@ public class BasicTextImage implements TextImage {
             @Override
             public TextGraphics setCharacter(int columnIndex, int rowIndex, TextCharacter textCharacter) {
                 BasicTextImage.this.setCharacterAt(columnIndex, rowIndex, textCharacter);
+                return this;
+            }
+
+            @Override
+            public TextGraphics fillRectangle(TerminalPosition topLeft, TerminalSize size, TextCharacter character) {
+                BasicTextImage.this.fillRectangle(topLeft.getColumn(), topLeft.getRow(), size.getColumns(), size.getRows(), character);
                 return this;
             }
 

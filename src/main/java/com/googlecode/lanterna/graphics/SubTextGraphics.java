@@ -22,6 +22,8 @@ import com.googlecode.lanterna.TextCharacter;
 import com.googlecode.lanterna.TerminalPosition;
 import com.googlecode.lanterna.TerminalSize;
 
+import java.util.Arrays;
+
 /**
  * This implementation of TextGraphics will take a 'proper' object and composite a view on top of it, by using a
  * top-left position and a size. Any attempts to put text outside of this area will be dropped.
@@ -70,6 +72,38 @@ class SubTextGraphics extends AbstractTextGraphics {
             return this;
         }
         underlyingTextGraphics.fillRectangle(project(left, top), new TerminalSize(right - left, bottom - top), character);
+        return this;
+    }
+
+    @Override
+    public TextGraphics putString(int column, int row, TextCharacter[] characters) {
+        // A cell is dropped when its first column is outside the view, so the visible cells are one run. Pass that run
+        // down as one call: the underlying graphics gives each cell the same column as one write per cell.
+        if(row < 0 || row >= writableAreaSize.getRows()) {
+            return this;
+        }
+        int from = -1;
+        int until = characters.length;
+        int firstColumn = 0;
+        int x = column;
+        for(int i = 0; i < characters.length; i++) {
+            if(x >= writableAreaSize.getColumns()) {
+                until = i;
+                break;
+            }
+            if(from < 0 && x >= 0) {
+                from = i;
+                firstColumn = x;
+            }
+            x += characters[i].isDoubleWidth() ? 2 : 1;
+        }
+        if(from < 0 || from >= until) {
+            return this;
+        }
+        TextCharacter[] visible = from == 0 && until == characters.length
+                ? characters
+                : Arrays.copyOfRange(characters, from, until);
+        underlyingTextGraphics.putString(topLeft.getColumn() + firstColumn, topLeft.getRow() + row, visible);
         return this;
     }
 

@@ -11,6 +11,14 @@
 > and a complete HTML terminal backend. It remains a drop-in replacement for
 > `com.googlecode.lanterna:lanterna:3.1.5` and adds focused public packages.
 
+### `3.1.5-vis.60`
+
+- Fill a screen or a `BasicTextImage` rectangle with one array fill per row. A
+  single-width fill no longer writes one cell at a time. A double-width or tab fill
+  keeps the old per-cell path.
+- Write a `putString` cell row under one screen lock. A `SubTextGraphics` view passes
+  its visible cells to its parent as one row, not one cell per nesting level.
+
 ### `3.1.5-vis.59`
 
 - Add `TerminalTextUtils.sanitizeForPaint`. It prepares a string for raw painting: each C0

@@ -98,6 +98,18 @@ public class ScreenBuffer implements TextImage {
         backend.setCharacterAt(column, row, character);
     }
 
+    /**
+     * Fills a rectangle with one character, see {@link BasicTextImage#fillRectangle(int, int, int, int, TextCharacter)}
+     * @param column Column of the top-left corner, can be negative
+     * @param row Row of the top-left corner, can be negative
+     * @param columns Width of the rectangle
+     * @param rows Height of the rectangle
+     * @param character Character to fill the rectangle with
+     */
+    void fillRectangle(int column, int row, int columns, int rows, TextCharacter character) {
+        backend.fillRectangle(column, row, columns, rows, character);
+    }
+
     @Override
     public void setAll(TextCharacter character) {
         backend.setAll(character);

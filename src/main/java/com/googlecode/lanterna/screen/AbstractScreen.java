@@ -133,11 +133,50 @@ public abstract class AbstractScreen implements Screen {
                 backBuffer.copyFrom(image, sourceImageTopLeft.getRow(), sourceImageSize.getRows(), sourceImageTopLeft.getColumn(), sourceImageSize.getColumns(), topLeft.getRow(), topLeft.getColumn());
                 return this;
             }
+
+            @Override
+            public TextGraphics fillRectangle(TerminalPosition topLeft, TerminalSize size, TextCharacter character) {
+                // A tab expands to spaces in setCharacter, so only other characters fill the back buffer directly
+                if(character.is('\t')) {
+                    return super.fillRectangle(topLeft, size, character);
+                }
+                fillBackBuffer(topLeft.getColumn(), topLeft.getRow(), size.getColumns(), size.getRows(), character);
+                return this;
+            }
+
+            @Override
+            public TextGraphics putString(int column, int row, TextCharacter[] characters) {
+                putCharacters(column, row, characters);
+                return this;
+            }
         };
+    }
+
+    private synchronized void fillBackBuffer(int column, int row, int columns, int rows, TextCharacter character) {
+        backBuffer.fillRectangle(column, row, columns, rows, character);
     }
 
     @Override
     public synchronized void setCharacter(int column, int row, TextCharacter screenCharacter) {
+        putCharacter(column, row, screenCharacter);
+    }
+
+    /**
+     * Writes characters in a row with the column advance of {@link TextGraphics#putString(int, int, TextCharacter[])},
+     * under one lock instead of one lock for each cell.
+     */
+    private synchronized void putCharacters(int column, int row, TextCharacter[] characters) {
+        int previousDoubleCharacterCount = 0;
+        for(int i = 0; i < characters.length; i++) {
+            TextCharacter textCharacter = characters[i];
+            putCharacter(column + i + previousDoubleCharacterCount, row, textCharacter);
+            if(textCharacter.isDoubleWidth()) {
+                previousDoubleCharacterCount++;
+            }
+        }
+    }
+
+    private void putCharacter(int column, int row, TextCharacter screenCharacter) {
         //It would be nice if we didn't have to care about tabs at this level, but we have no such luxury
         if(screenCharacter.is('\t')) {
             //Swap out the tab for a space
