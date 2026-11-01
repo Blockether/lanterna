@@ -11,6 +11,12 @@
 > and a complete HTML terminal backend. It remains a drop-in replacement for
 > `com.googlecode.lanterna:lanterna:3.1.5` and adds focused public packages.
 
+### `3.1.5-vis.59`
+
+- Add `TerminalTextUtils.sanitizeForPaint`. It prepares a string for raw painting: each C0
+  control except tab, line feed and carriage return becomes a space. It also removes each
+  inline-span sentinel (U+E110..U+E119). A clean string comes back with no allocation.
+
 ### `3.1.5-vis.58`
 
 - Make fills through nested `TextGraphics` views faster. A `SubTextGraphics` view clips

@@ -233,6 +233,40 @@ public class TerminalTextUtils {
     }
 
     /**
+     * Prepare {@code s} for raw painting. Each C0 control except tab, line feed
+     * and carriage return becomes a space. Each inline-span sentinel
+     * (U+E110..U+E119) is removed. Returns {@code s} unchanged (same identity,
+     * no allocation) when it is already clean, so a clean line costs one scan.
+     * @param s String to sanitize
+     * @return {@code s} ready for raw painting
+     */
+    public static String sanitizeForPaint(String s) {
+        final int n = s.length();
+        int i = 0;
+        while (i < n && !needsPaintSanitize(s.charAt(i))) {
+            i++;
+        }
+        if (i == n) {
+            return s;
+        }
+        final StringBuilder out = new StringBuilder(n);
+        out.append(s, 0, i);
+        for (; i < n; i++) {
+            final char c = s.charAt(i);
+            if (c >= INLINE_SENTINEL_LO && c <= INLINE_SENTINEL_HI) {
+                continue;
+            }
+            out.append(needsPaintSanitize(c) ? ' ' : c);
+        }
+        return out.toString();
+    }
+
+    private static boolean needsPaintSanitize(char c) {
+        return c < 0x09 || c == 0x0B || c == 0x0C || (c >= 0x0E && c <= 0x1F)
+                || (c >= INLINE_SENTINEL_LO && c <= INLINE_SENTINEL_HI);
+    }
+
+    /**
      * Number of terminal columns {@code s} occupies when painted, honouring
      * grapheme clusters (via {@link TextCharacter#fromString}), CJK/emoji as two
      * columns and ASCII as one. Inline-span sentinels count as zero columns.

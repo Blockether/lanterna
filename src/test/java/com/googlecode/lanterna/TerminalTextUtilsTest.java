@@ -317,6 +317,20 @@ public class TerminalTextUtilsTest {
     }
 
     @Test
+    public void sanitizeForPaint_spacesC0DropsSentinelsKeepsLayoutControls() {
+        String clean = "hello\tworld\r\n";
+        assertSame("clean string returned unchanged (same identity)",
+                clean, TerminalTextUtils.sanitizeForPaint(clean));
+        assertEquals("C0 controls other than tab, LF and CR become spaces",
+                "a b c", TerminalTextUtils.sanitizeForPaint("a\u0001b\u001bc"));
+        assertEquals("inline sentinels are removed",
+                "bold", TerminalTextUtils.sanitizeForPaint("\ue110bold\ue111"));
+        assertEquals("tab kept after the first change",
+                " \tx", TerminalTextUtils.sanitizeForPaint("\u0007\tx"));
+        assertEquals("empty string", "", TerminalTextUtils.sanitizeForPaint(""));
+    }
+
+    @Test
     public void displayColumns_countsAsciiCjkAndNull() {
         assertEquals(0, TerminalTextUtils.displayColumns(null));
         assertEquals(0, TerminalTextUtils.displayColumns(""));
