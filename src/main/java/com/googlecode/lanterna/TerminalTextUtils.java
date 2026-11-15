@@ -175,14 +175,6 @@ public class TerminalTextUtils {
     // strings (the common case) short-circuit to their char length, skipping the
     // grapheme/width segmentation entirely. All arithmetic is primitive int.
 
-    /**
-     * Inline-span sentinels: the BMP private-use range U+E110..U+E119 carries
-     * zero-width inline style toggles (bold/italic/strike/code/link on and off).
-     * They are never painted and occupy zero terminal columns.
-     */
-    private static final int INLINE_SENTINEL_LO = 0xE110;
-    private static final int INLINE_SENTINEL_HI = 0xE119;
-
     private static boolean allNarrowAscii(String s, int n) {
         for (int i = 0; i < n; i++) {
             char c = s.charAt(i);
@@ -244,8 +236,7 @@ public class TerminalTextUtils {
     /** {@link #cellColumns} for text with inline-span sentinels, which have no columns. */
     private static int inlineCellColumns(String s, int begin, int end, UnicodeWidth.WidthMethod method) {
         if (end - begin == 1) {
-            char c = s.charAt(begin);
-            if (c >= INLINE_SENTINEL_LO && c <= INLINE_SENTINEL_HI) {
+            if (InlineSpans.isSentinel(s.charAt(begin))) {
                 return 0;
             }
         }
@@ -299,7 +290,7 @@ public class TerminalTextUtils {
     /**
      * Prepare {@code s} for raw painting. Each C0 control except tab, line feed
      * and carriage return becomes a space. Each inline-span sentinel
-     * (U+E110..U+E119) is removed. Returns {@code s} unchanged (same identity,
+     * ({@link InlineSpans}) is removed. Returns {@code s} unchanged (same identity,
      * no allocation) when it is already clean, so a clean line costs one scan.
      * @param s String to sanitize
      * @return {@code s} ready for raw painting
@@ -317,7 +308,7 @@ public class TerminalTextUtils {
         out.append(s, 0, i);
         for (; i < n; i++) {
             final char c = s.charAt(i);
-            if (c >= INLINE_SENTINEL_LO && c <= INLINE_SENTINEL_HI) {
+            if (InlineSpans.isSentinel(c)) {
                 continue;
             }
             out.append(needsPaintSanitize(c) ? ' ' : c);
@@ -327,7 +318,7 @@ public class TerminalTextUtils {
 
     private static boolean needsPaintSanitize(char c) {
         return c < 0x09 || c == 0x0B || c == 0x0C || (c >= 0x0E && c <= 0x1F)
-                || (c >= INLINE_SENTINEL_LO && c <= INLINE_SENTINEL_HI);
+                || InlineSpans.isSentinel(c);
     }
 
     /**
@@ -1168,6 +1159,43 @@ public class TerminalTextUtils {
     }
 
     /**
+     * Removes each well-formed {@code \u001b[..m} SGR escape. Other text stays,
+     * also an escape that is not SGR. Returns {@code s} itself when it holds no
+     * SGR escape.
+     * @param s input (nullable), may carry SGR escapes
+     * @return {@code s} without SGR escapes, or {@code ""} for {@code null}
+     */
+    public static String stripSgr(String s) {
+        if (s == null) {
+            return "";
+        }
+        int esc = s.indexOf(27);
+        if (esc < 0) {
+            return s;
+        }
+        final int n = s.length();
+        StringBuilder out = null;
+        int copied = 0;
+        while (esc >= 0) {
+            final int m = sgrEscapeEnd(s, esc);
+            if (m < 0) {
+                esc = s.indexOf(27, esc + 1);
+                continue;
+            }
+            if (out == null) {
+                out = new StringBuilder(n);
+            }
+            out.append(s, copied, esc);
+            copied = m + 1;
+            esc = s.indexOf(27, copied);
+        }
+        if (out == null) {
+            return s;
+        }
+        return out.append(s, copied, n).toString();
+    }
+
+    /**
      * If {@code s} at {@code escIdx} begins a well-formed {@code \u001b[ ... m} SGR
      * sequence (only digits and {@code ';'} between {@code [} and the closing
      * {@code m}), return the index of that {@code m}; otherwise {@code -1}.
@@ -1274,6 +1302,14 @@ public class TerminalTextUtils {
     }
 
     /**
+     * Columns of {@code s} for a pad. Inline-span sentinels have no columns, as
+     * in the painted line; text without them keeps the {@link #displayWidth} measure.
+     */
+    private static int paddedColumns(String s) {
+        return InlineSpans.contains(s) ? displayColumns(s) : displayWidth(s);
+    }
+
+    /**
      * Pad {@code s} on the RIGHT with spaces so it occupies exactly
      * {@code width} display columns. A string already exactly {@code width}
      * wide is returned as-is; one WIDER than {@code width} is column-truncated
@@ -1284,7 +1320,7 @@ public class TerminalTextUtils {
      */
     public static String padRight(String s, int width) {
         String txt = s == null ? "" : s;
-        int cols = displayWidth(txt);
+        int cols = paddedColumns(txt);
         if (cols == width) {
             return txt;
         }
@@ -1303,7 +1339,7 @@ public class TerminalTextUtils {
      */
     public static String padLeft(String s, int width) {
         String txt = s == null ? "" : s;
-        int cols = displayWidth(txt);
+        int cols = paddedColumns(txt);
         if (cols == width) {
             return txt;
         }
@@ -1323,7 +1359,7 @@ public class TerminalTextUtils {
      */
     public static String center(String s, int width) {
         String txt = s == null ? "" : s;
-        int cols = displayWidth(txt);
+        int cols = paddedColumns(txt);
         if (cols >= width) {
             return truncateColumns(txt, width);
         }

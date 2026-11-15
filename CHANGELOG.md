@@ -11,6 +11,21 @@
 > and a complete HTML terminal backend. It remains a drop-in replacement for
 > `com.googlecode.lanterna:lanterna:3.1.5` and adds focused public packages.
 
+### `3.1.5-vis.62`
+
+- Add `InlineSpans`: the one owner of the inline-span sentinels U+E110..U+E11B (bold,
+  italic, strike, code, link and error, each with ON and OFF). `isSentinel`, `contains`
+  and `strip` test and remove them. `cells` resolves a line to its styled
+  `TextCharacter` cells. `carry` makes each line of a wrapped text open and close its
+  own spans.
+- Fix the width of the error span. `TerminalTextUtils` counted its sentinels U+E11A and
+  U+E11B as one column each, so a truncate or a pad of an error line lost two columns,
+  and `sanitizeForPaint` kept them. All measures now read the range from `InlineSpans`.
+- Fix `padRight`, `padLeft` and `center` for a line with inline-span sentinels. They
+  counted one column for each sentinel, so the padded line was too short.
+- Add `TerminalTextUtils.stripSgr(String)`. It removes each well-formed SGR escape and
+  returns the same string when there is none.
+
 ### `3.1.5-vis.61`
 
 - Measure text in place. `displayColumns`, `columnPrefixLength`, `truncateColumns`,

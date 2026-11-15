@@ -387,11 +387,11 @@ public class TerminalTextUtilsTest {
             "a", "Z", " ", "~", "\t", "\r", "\n", "\r\n", "\u0001", "\u007f", "\u00e9", "\u00a9",
             "e\u0301", "\u0301", "\u4e2d", "\uff21", "\uff76", "\ud83d\ude00", "\ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67",
             "\u2764\ufe0f", "\u2764", "\ufe0f", "\u200d", "\ud83c\uddf5\ud83c\uddf1", "\ud83c\uddf5", "\u0915\u094d\u0937",
-            "\u0e01\u0e33", "\ud83d\udc4d\ud83c\udffd", "\ue110", "\ue119", "\ue11a", "\ud83d", "\ude00", "\u1100\u1161\u11a8"};
+            "\u0e01\u0e33", "\ud83d\udc4d\ud83c\udffd", "\ue110", "\ue119", "\ue11a", "\ue11b", "\ud83d", "\ude00", "\u1100\u1161\u11a8"};
 
     private static int oracleColumns(TextCharacter tc, boolean inline) {
         String g = tc.getCharacterString();
-        if (inline && g.length() == 1 && g.charAt(0) >= 0xE110 && g.charAt(0) <= 0xE119) {
+        if (inline && g.length() == 1 && InlineSpans.isSentinel(g.charAt(0))) {
             return 0;
         }
         return tc.isDoubleWidth() ? 2 : 1;
@@ -521,6 +521,37 @@ public class TerminalTextUtilsTest {
         } finally {
             UnicodeWidth.setWidthMethod(before);
         }
+    }
+
+    @Test
+    public void errorSpanSentinelsHaveNoColumns() {
+        String s = InlineSpans.ERROR_ON + "abcdef" + InlineSpans.ERROR_OFF;
+        assertEquals(6, TerminalTextUtils.displayColumns(s));
+        assertEquals("the text fits: nothing is cut", s, TerminalTextUtils.truncateColumns(s, 6));
+        assertEquals(s.length(), TerminalTextUtils.columnPrefixLength(s, 6));
+        assertEquals("abcdef", TerminalTextUtils.sanitizeForPaint(s));
+    }
+
+    @Test
+    public void padsCountNoColumnsForInlineSpanSentinels() {
+        String bold = InlineSpans.BOLD_ON + "ab" + InlineSpans.BOLD_OFF;
+        assertEquals(bold + "  ", TerminalTextUtils.padRight(bold, 4));
+        assertEquals("  " + bold, TerminalTextUtils.padLeft(bold, 4));
+        assertEquals(" " + bold + " ", TerminalTextUtils.center(bold, 4));
+        assertEquals("the text fits: nothing is cut", bold, TerminalTextUtils.padRight(bold, 2));
+        assertEquals("ab  ", TerminalTextUtils.padRight("ab", 4));
+    }
+
+    @Test
+    public void stripSgr_removesOnlyWellFormedSgrEscapes() {
+        String clean = "plain text";
+        assertSame("no SGR escape: same instance", clean, TerminalTextUtils.stripSgr(clean));
+        assertEquals("red plain", TerminalTextUtils.stripSgr("\u001b[31mred\u001b[0m plain\u001b[m"));
+        assertEquals("ab", TerminalTextUtils.stripSgr("a\u001b[1;38;5;10mb"));
+        String cursor = "a\u001b[2Kb";
+        assertSame("an escape that is not SGR stays", cursor, TerminalTextUtils.stripSgr(cursor));
+        assertEquals("\u001b[2Kx\u001b", TerminalTextUtils.stripSgr("\u001b[2K\u001b[0mx\u001b"));
+        assertEquals("", TerminalTextUtils.stripSgr(null));
     }
 
     @Test
