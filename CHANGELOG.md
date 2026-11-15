@@ -11,6 +11,15 @@
 > and a complete HTML terminal backend. It remains a drop-in replacement for
 > `com.googlecode.lanterna:lanterna:3.1.5` and adds focused public packages.
 
+### `3.1.5-vis.61`
+
+- Measure text in place. `displayColumns`, `columnPrefixLength`, `truncateColumns`,
+  `displayWidth`, `foldColumns`, `ansiFoldColumns` and `truncateMiddle` of
+  `TerminalTextUtils` no longer build one interned `TextCharacter` for each grapheme
+  cluster. They read the cell edges and widths from the string. The results are the same.
+- Add `UnicodeWidth.graphemeWidth(CharSequence, int, int, WidthMethod)`. It gives the
+  width of one cluster of a longer text with no substring.
+
 ### `3.1.5-vis.60`
 
 - Fill a screen or a `BasicTextImage` rectangle with one array fill per row. A

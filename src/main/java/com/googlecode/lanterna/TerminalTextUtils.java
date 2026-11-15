@@ -183,14 +183,6 @@ public class TerminalTextUtils {
     private static final int INLINE_SENTINEL_LO = 0xE110;
     private static final int INLINE_SENTINEL_HI = 0xE119;
 
-    private static boolean isInlineSentinel(String g) {
-        if (g.length() != 1) {
-            return false;
-        }
-        char c = g.charAt(0);
-        return c >= INLINE_SENTINEL_LO && c <= INLINE_SENTINEL_HI;
-    }
-
     private static boolean allNarrowAscii(String s, int n) {
         for (int i = 0; i < n; i++) {
             char c = s.charAt(i);
@@ -199,6 +191,78 @@ public class TerminalTextUtils {
             }
         }
         return true;
+    }
+
+    // ---- Cell walk ----------------------------------------------------------
+    // The cells of TextCharacter.fromString, read in place. A measure needs the
+    // edges and the widths of the cells, not one interned TextCharacter for each.
+
+    /** True when {@code TextCharacter.fromString} makes one cell for each char of {@code s}. */
+    private static boolean isPerCharCells(String s, int n) {
+        for (int i = 0; i < n; i++) {
+            if (s.charAt(i) >= 0x80) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Char index after the cell that starts at {@code begin}. */
+    private static int cellEnd(String s, int begin, int n, boolean perChar) {
+        int next = begin + 1;
+        if (perChar || next == n) {
+            return next;
+        }
+        char c = s.charAt(begin);
+        if (c < 0x80) {
+            // Two ASCII chars never join, except CR LF.
+            char d = s.charAt(next);
+            if (d < 0x80 && !(c == '\r' && d == '\n')) {
+                return next;
+            }
+        }
+        return UnicodeWidth.graphemeEnd(s, begin);
+    }
+
+    /** True when the cell at {@code begin} is a control cell, which a TextCharacter holds as one space. */
+    private static boolean isControlCell(String s, int begin) {
+        char c = s.charAt(begin);
+        return c != '\t' && isControlCharacter(c);
+    }
+
+    /** Columns of the cell {@code [begin, end)}: 2 for a double-width cluster, else 1. */
+    private static int cellColumns(String s, int begin, int end, UnicodeWidth.WidthMethod method) {
+        if (end - begin == 1 && s.charAt(begin) < 0x80) {
+            return 1;
+        }
+        if (isControlCell(s, begin)) {
+            return 1;
+        }
+        return UnicodeWidth.graphemeWidth(s, begin, end, method) >= 2 ? 2 : 1;
+    }
+
+    /** {@link #cellColumns} for text with inline-span sentinels, which have no columns. */
+    private static int inlineCellColumns(String s, int begin, int end, UnicodeWidth.WidthMethod method) {
+        if (end - begin == 1) {
+            char c = s.charAt(begin);
+            if (c >= INLINE_SENTINEL_LO && c <= INLINE_SENTINEL_HI) {
+                return 0;
+            }
+        }
+        return cellColumns(s, begin, end, method);
+    }
+
+    /** Appends the cells of {@code [from, to)} as a TextCharacter holds them: a control cell is one space. */
+    private static void appendCells(StringBuilder sb, String s, int from, int to, int n, boolean perChar) {
+        for (int begin = from; begin < to; ) {
+            int end = cellEnd(s, begin, n, perChar);
+            if (isControlCell(s, begin)) {
+                sb.append(' ');
+            } else {
+                sb.append(s, begin, end);
+            }
+            begin = end;
+        }
     }
 
     /**
@@ -306,14 +370,13 @@ public class TerminalTextUtils {
         if (allNarrowAscii(safe, len)) {
             return len;
         }
-        TextCharacter[] cells = TextCharacter.fromString(safe);
+        boolean perChar = isPerCharCells(safe, len);
+        UnicodeWidth.WidthMethod method = UnicodeWidth.getWidthMethod();
         int width = 0;
-        for (int i = 0; i < cells.length; i++) {
-            TextCharacter tc = cells[i];
-            if (isInlineSentinel(tc.getCharacterString())) {
-                continue;
-            }
-            width += tc.isDoubleWidth() ? 2 : 1;
+        for (int begin = 0; begin < len; ) {
+            int end = cellEnd(safe, begin, len, perChar);
+            width += inlineCellColumns(safe, begin, end, method);
+            begin = end;
         }
         return width;
     }
@@ -337,25 +400,21 @@ public class TerminalTextUtils {
             // ASCII: one column per char, so the longest fitting prefix is min(len, maxCols).
             return Math.min(len, maxCols);
         }
-        // Single grapheme segmentation that both measures and finds the cut. The prior
-        // version called displayColumns() first (a full fromString walk) and then
-        // fromString() again to walk — segmenting every clipped non-ASCII line twice.
-        // Walking to completion yields charIdx == len when the whole string fits, so the
-        // leading displayColumns() early-out is redundant.
-        TextCharacter[] cells = TextCharacter.fromString(safe);
-        int charIdx = 0;
+        // One cell walk both measures and finds the cut. It stops at the cut, so a long
+        // line costs only its fitting prefix.
+        boolean perChar = isPerCharCells(safe, len);
+        UnicodeWidth.WidthMethod method = UnicodeWidth.getWidthMethod();
         int used = 0;
-        for (int i = 0; i < cells.length; i++) {
-            TextCharacter tc = cells[i];
-            String g = tc.getCharacterString();
-            int w = isInlineSentinel(g) ? 0 : (tc.isDoubleWidth() ? 2 : 1);
+        for (int begin = 0; begin < len; ) {
+            int end = cellEnd(safe, begin, len, perChar);
+            int w = inlineCellColumns(safe, begin, end, method);
             if (used + w > maxCols) {
-                return charIdx;
+                return begin;
             }
-            charIdx += g.length();
             used += w;
+            begin = end;
         }
-        return charIdx;
+        return len;
     }
 
     /**
@@ -380,33 +439,27 @@ public class TerminalTextUtils {
             // double-width straddle, so the fit is a plain substring.
             return len <= maxCols ? s : s.substring(0, maxCols);
         }
-        // Segment ONCE. The prior version called displayColumns() (a full fromString
-        // walk) purely to test "does it fit", then fromString() AGAIN to build the
-        // truncation — segmenting every clipped non-ASCII line twice. Here a single
-        // fromString feeds a cheap fit-probe over the materialized cells; only on an
-        // actual overflow do we allocate a StringBuilder (the fit case returns the
-        // original string with zero allocation, as before). At the break, `used` is
-        // already the exact column width of the fitting prefix.
-        TextCharacter[] cells = TextCharacter.fromString(s);
+        // One cell walk tests the fit and finds the cut. A string that fits comes back
+        // with no allocation. At the cut, `used` is the column width of the fitting prefix.
+        boolean perChar = isPerCharCells(s, len);
+        UnicodeWidth.WidthMethod method = UnicodeWidth.getWidthMethod();
         int used = 0;
         int cut = -1;
-        for (int i = 0; i < cells.length; i++) {
-            TextCharacter tc = cells[i];
-            String g = tc.getCharacterString();
-            int w = isInlineSentinel(g) ? 0 : (tc.isDoubleWidth() ? 2 : 1);
+        for (int begin = 0; begin < len; ) {
+            int end = cellEnd(s, begin, len, perChar);
+            int w = inlineCellColumns(s, begin, end, method);
             if (used + w > maxCols) {
-                cut = i;
+                cut = begin;
                 break;
             }
             used += w;
+            begin = end;
         }
         if (cut < 0) {
             return s;
         }
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < cut; i++) {
-            sb.append(cells[i].getCharacterString());
-        }
+        StringBuilder sb = new StringBuilder(cut + 1);
+        appendCells(sb, s, 0, cut, len, perChar);
         if (used < maxCols) {
             sb.append(' ');
         }
@@ -690,9 +743,12 @@ public class TerminalTextUtils {
         if (simple) {
             return n;
         }
+        UnicodeWidth.WidthMethod method = UnicodeWidth.getWidthMethod();
         int width = 0;
-        for (TextCharacter tc : TextCharacter.fromString(s)) {
-            width += tc.isDoubleWidth() ? 2 : 1;
+        for (int begin = 0; begin < n; ) {
+            int end = cellEnd(s, begin, n, false);
+            width += cellColumns(s, begin, end, method);
+            begin = end;
         }
         return width;
     }
@@ -785,15 +841,23 @@ public class TerminalTextUtils {
         List<String> pieces = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         int currentWidth = 0;
-        for (TextCharacter tc : TextCharacter.fromString(word)) {
-            int w = tc.isDoubleWidth() ? 2 : 1;
+        boolean perChar = isPerCharCells(word, wlen);
+        UnicodeWidth.WidthMethod method = UnicodeWidth.getWidthMethod();
+        for (int begin = 0; begin < wlen; ) {
+            int end = cellEnd(word, begin, wlen, perChar);
+            int w = cellColumns(word, begin, end, method);
             if (currentWidth > 0 && currentWidth + w > maxColumns) {
                 pieces.add(current.toString());
                 current.setLength(0);
                 currentWidth = 0;
             }
-            current.append(tc.getCharacterString());
+            if (isControlCell(word, begin)) {
+                current.append(' ');
+            } else {
+                current.append(word, begin, end);
+            }
             currentWidth += w;
+            begin = end;
         }
         pieces.add(current.toString());
         return pieces;
@@ -947,7 +1011,7 @@ public class TerminalTextUtils {
             // double-width glyph under a tiny budget still progresses), close the
             // row, and continue on a new row carrying `active`.
             if (k == 0) {
-                k = TextCharacter.fromString(run)[0].getCharacterString().length();
+                k = isControlCell(run, 0) ? 1 : cellEnd(run, 0, run.length(), false);
             }
             String head = run.substring(0, k);
             String tail = run.substring(k);
@@ -1292,19 +1356,31 @@ public class TerminalTextUtils {
         int tailCols = budget / 2;
         int headCols = budget - tailCols;
         String head = truncateColumns(s, headCols);
-        TextCharacter[] cells = TextCharacter.fromString(s);
-        StringBuilder tail = new StringBuilder();
+        // The tail is read from the end, and a cell walk goes forward only: keep the edges.
+        int n = s.length();
+        boolean perChar = isPerCharCells(s, n);
+        UnicodeWidth.WidthMethod method = UnicodeWidth.getWidthMethod();
+        int[] edges = new int[n + 1];
+        int cells = 0;
+        for (int begin = 0; begin < n; ) {
+            edges[cells++] = begin;
+            begin = cellEnd(s, begin, n, perChar);
+        }
+        edges[cells] = n;
+        int tailFrom = n;
         int used = 0;
-        for (int i = cells.length - 1; i >= 0; i--) {
-            TextCharacter tc = cells[i];
-            int w = tc.isDoubleWidth() ? 2 : 1;
+        for (int i = cells - 1; i >= 0; i--) {
+            int w = cellColumns(s, edges[i], edges[i + 1], method);
             if (used + w > tailCols) {
                 break;
             }
-            tail.insert(0, tc.getCharacterString());
+            tailFrom = edges[i];
             used += w;
         }
-        return head + "…" + tail;
+        StringBuilder out = new StringBuilder(head.length() + 1 + (n - tailFrom));
+        out.append(head).append('…');
+        appendCells(out, s, tailFrom, n, n, perChar);
+        return out.toString();
     }
 
     /**

@@ -389,15 +389,29 @@ public final class UnicodeWidth {
      * @return column width of the cluster, which can be 0 or more than 2
      */
     public static int graphemeWidth(String grapheme, WidthMethod method) {
-        int first = codePointAt(grapheme, 0);
+        return graphemeWidth(grapheme, 0, grapheme.length(), method);
+    }
+
+    /**
+     * Returns the column width of the grapheme cluster {@code [start, end)} of {@code text}.
+     * It measures a cluster in place, with no substring. The range must hold exactly one
+     * cluster: {@code end} is the {@link #graphemeEnd} of {@code start}.
+     * @param text text that holds the cluster
+     * @param start char index of the first code point of the cluster
+     * @param end char index after the last code point of the cluster
+     * @param method width method of the terminal
+     * @return column width of the cluster, which can be 0 or more than 2
+     */
+    public static int graphemeWidth(CharSequence text, int start, int end, WidthMethod method) {
+        int first = codePointAt(text, start);
         int width = charWidth(first);
         boolean hasWidth = width > 0;
         boolean regionalIndicatorPair = first >= 0x1F1E6 && first <= 0x1F1FF;
         boolean hasIndicVirama = false;
-        int index = Character.charCount(Character.codePointAt(grapheme, 0));
-        while (index < grapheme.length()) {
-            int codePoint = codePointAt(grapheme, index);
-            index += Character.charCount(Character.codePointAt(grapheme, index));
+        int index = start + Character.charCount(Character.codePointAt(text, start));
+        while (index < end) {
+            int codePoint = codePointAt(text, index);
+            index += Character.charCount(Character.codePointAt(text, index));
             int codePointWidth = charWidth(codePoint);
             if (method == WidthMethod.WCWIDTH) {
                 int w = eawToWidth(codePoint);

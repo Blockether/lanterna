@@ -381,6 +381,148 @@ public class TerminalTextUtilsTest {
                 5, TerminalTextUtils.displayColumns(TerminalTextUtils.padRight("\u3042", 5)));
     }
 
+    // The measures walk the cells in place. The painter builds them with
+    // TextCharacter.fromString; both must agree for each string and width method.
+    private static final String[] CELL_ATOMS = {
+            "a", "Z", " ", "~", "\t", "\r", "\n", "\r\n", "\u0001", "\u007f", "\u00e9", "\u00a9",
+            "e\u0301", "\u0301", "\u4e2d", "\uff21", "\uff76", "\ud83d\ude00", "\ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67",
+            "\u2764\ufe0f", "\u2764", "\ufe0f", "\u200d", "\ud83c\uddf5\ud83c\uddf1", "\ud83c\uddf5", "\u0915\u094d\u0937",
+            "\u0e01\u0e33", "\ud83d\udc4d\ud83c\udffd", "\ue110", "\ue119", "\ue11a", "\ud83d", "\ude00", "\u1100\u1161\u11a8"};
+
+    private static int oracleColumns(TextCharacter tc, boolean inline) {
+        String g = tc.getCharacterString();
+        if (inline && g.length() == 1 && g.charAt(0) >= 0xE110 && g.charAt(0) <= 0xE119) {
+            return 0;
+        }
+        return tc.isDoubleWidth() ? 2 : 1;
+    }
+
+    private static int oracleWidth(String s, boolean inline) {
+        int width = 0;
+        for (TextCharacter tc : TextCharacter.fromString(s)) {
+            width += oracleColumns(tc, inline);
+        }
+        return width;
+    }
+
+    // displayWidth takes the length of a string with no char from U+0300 up.
+    private static int oracleDisplayWidth(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            if (s.charAt(i) >= 0x0300) {
+                return oracleWidth(s, false);
+            }
+        }
+        return s.length();
+    }
+
+    private static int oraclePrefix(String s, int maxCols) {
+        int index = 0;
+        int used = 0;
+        for (TextCharacter tc : TextCharacter.fromString(s)) {
+            int w = oracleColumns(tc, true);
+            if (used + w > maxCols) {
+                return index;
+            }
+            index += tc.getCharacterString().length();
+            used += w;
+        }
+        return index;
+    }
+
+    private static String oracleTruncate(String s, int maxCols) {
+        TextCharacter[] cells = TextCharacter.fromString(s);
+        StringBuilder sb = new StringBuilder();
+        int used = 0;
+        for (TextCharacter tc : cells) {
+            int w = oracleColumns(tc, true);
+            if (used + w > maxCols) {
+                return used < maxCols ? sb.append(' ').toString() : sb.toString();
+            }
+            sb.append(tc.getCharacterString());
+            used += w;
+        }
+        return s;
+    }
+
+    private static List<String> oracleFold(String line, int maxCols) {
+        if (oracleDisplayWidth(line) <= maxCols) {
+            return Collections.singletonList(line);
+        }
+        List<String> pieces = new java.util.ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        int width = 0;
+        for (TextCharacter tc : TextCharacter.fromString(line)) {
+            int w = oracleColumns(tc, false);
+            if (width > 0 && width + w > maxCols) {
+                pieces.add(current.toString());
+                current.setLength(0);
+                width = 0;
+            }
+            current.append(tc.getCharacterString());
+            width += w;
+        }
+        pieces.add(current.toString());
+        return pieces;
+    }
+
+    private static String oracleMiddle(String s, int maxCols) {
+        if (oracleDisplayWidth(s) <= maxCols) {
+            return s;
+        }
+        if (maxCols <= 2) {
+            return oracleTruncate(s, maxCols);
+        }
+        int tailCols = (maxCols - 1) / 2;
+        TextCharacter[] cells = TextCharacter.fromString(s);
+        StringBuilder tail = new StringBuilder();
+        int used = 0;
+        for (int i = cells.length - 1; i >= 0; i--) {
+            int w = oracleColumns(cells[i], false);
+            if (used + w > tailCols) {
+                break;
+            }
+            tail.insert(0, cells[i].getCharacterString());
+            used += w;
+        }
+        return oracleTruncate(s, maxCols - 1 - tailCols) + "\u2026" + tail;
+    }
+
+    @Test
+    public void measuresAgreeWithThePaintedCells() {
+        UnicodeWidth.WidthMethod before = UnicodeWidth.getWidthMethod();
+        java.util.Random random = new java.util.Random(20260511L);
+        try {
+            for (UnicodeWidth.WidthMethod method : UnicodeWidth.WidthMethod.values()) {
+                UnicodeWidth.setWidthMethod(method);
+                for (int round = 0; round < 4000; round++) {
+                    StringBuilder sb = new StringBuilder();
+                    // Half of the strings hold only chars below U+0080: fromString slices those per char.
+                    int atoms = round % 2 == 0 ? 12 : CELL_ATOMS.length;
+                    int parts = random.nextInt(14);
+                    for (int i = 0; i < parts; i++) {
+                        sb.append(CELL_ATOMS[random.nextInt(atoms)]);
+                    }
+                    String s = sb.toString();
+                    int cols = 1 + random.nextInt(12);
+                    String label = method + " cols=" + cols + " " + Arrays.toString(s.toCharArray());
+                    String safe = TerminalTextUtils.sanitizeControlChars(s);
+                    assertEquals(label, oracleWidth(safe, true), TerminalTextUtils.displayColumns(s));
+                    assertEquals(label, oraclePrefix(safe, cols), TerminalTextUtils.columnPrefixLength(s, cols));
+                    assertEquals(label, oracleTruncate(s, cols), TerminalTextUtils.truncateColumns(s, cols));
+                    assertEquals(label, oracleDisplayWidth(s), TerminalTextUtils.displayWidth(s));
+                    assertEquals(label, oracleMiddle(s, cols), TerminalTextUtils.truncateMiddle(s, cols));
+                    List<String> folded = new java.util.ArrayList<>();
+                    for (String line : s.split("\n", -1)) {
+                        folded.addAll(oracleFold(line, cols));
+                    }
+                    assertEquals(label, folded, TerminalTextUtils.foldColumns(cols, s));
+                }
+            }
+        } finally {
+            UnicodeWidth.setWidthMethod(before);
+        }
+    }
+
     @Test
     public void truncateMiddle_keepsHeadAndTailBehindEllipsis() {
         assertEquals("fits untouched", "/very/long/path",
