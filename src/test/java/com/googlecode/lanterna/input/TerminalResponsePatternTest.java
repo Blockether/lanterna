@@ -93,6 +93,29 @@ public class TerminalResponsePatternTest {
     }
 
     @Test
+    public void matchesDeviceStatusReports() {
+        assertResponse("\033[?997;1n");
+        assertResponse("\033[?997;2n");
+        assertPartial("\033[?997;1");
+        assertNull(match("\033[?997;1nn"));
+        assertFalse(((TerminalResponse) match("\033[?997;1n").fullMatch).isPrimaryDeviceAttributes());
+    }
+
+    @Test
+    public void matchesBackgroundColorReplies() {
+        assertResponse("\033]11;rgb:1e1e/1e1e/2e2e\033\\");
+        assertResponse("\033]11;rgb:ffff/ffff/ffff\u0007");
+        assertPartial("\033]");
+        assertPartial("\033]11;rgb:1e1e");
+        assertPartial("\033]11;rgb:1e1e/1e1e/2e2e\033");
+        assertNull(match("\033]52;"));
+        assertNull(match("\033]11;rgb:0/0/0\u0007x"));
+        assertNull(match("\033]11;rgb:0/0/0\033x"));
+        // BEL ends only the color reply
+        assertNull(match("\033P>|tmux\u0007"));
+    }
+
+    @Test
     public void rejectsOtherInput() {
         assertNull(match("a"));
         assertNull(match("\033O"));

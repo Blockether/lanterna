@@ -20,6 +20,7 @@ package com.googlecode.lanterna.terminal.ansi;
 
 import com.googlecode.lanterna.UnicodeWidth;
 import com.googlecode.lanterna.UnicodeWidth.WidthMethod;
+import com.googlecode.lanterna.terminal.ansi.TerminalCapabilities.ColorScheme;
 import com.googlecode.lanterna.terminal.ansi.TerminalCapabilities.Multiplexer;
 import org.junit.After;
 import org.junit.Test;
@@ -29,18 +30,22 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 public class TerminalCapabilitiesTest {
 
-    private static final String QUERY_WITH_PROBES = "\033[>0q\033[?25l\033[s\033[6n\033[?2027$p"
+    private static final String QUERY_WITH_PROBES = "\033[>0q\033[?996n\033]11;?\033\\\033[?25l\033[s\033[6n\033[?2027$p"
             + "\033[H\033]66;w=1; \033\\\033[6n\033[H\033]66;s=2; \033\\\033[6n\033[u";
 
     @After
@@ -148,7 +153,7 @@ public class TerminalCapabilitiesTest {
     public void skipsTheWidthProbesWhenExplicitWidthIsOff() {
         for(String value: new String[] {"0", "false"}) {
             TerminalCapabilities capabilities = new TerminalCapabilities(env("OPENTUI_FORCE_EXPLICIT_WIDTH", value));
-            assertEquals("\033[>0q\033[?25l\033[s\033[6n\033[?2027$p\033[u", capabilities.buildQuery());
+            assertEquals("\033[>0q\033[?996n\033]11;?\033\\\033[?25l\033[s\033[6n\033[?2027$p\033[u", capabilities.buildQuery());
             capabilities.processCapabilityResponse("\033[3;3R");
             assertFalse(capabilities.isAwaitingCursorPositionReports());
             capabilities.processCapabilityResponse("\033[1;2R");
@@ -223,6 +228,33 @@ public class TerminalCapabilitiesTest {
         assertEquals(TerminalCapabilities.UNICODE_SET, capabilities.enableDetectedFeatures());
         capabilities.applyWidthMethod();
         assertEquals(WidthMethod.UNICODE_WIDE, UnicodeWidth.getWidthMethod());
+    }
+
+    @Test
+    public void detectsTheColorScheme() {
+        TerminalCapabilities capabilities = new TerminalCapabilities(Collections.<String, String>emptyMap());
+        List<ColorScheme> changes = new ArrayList<>();
+        capabilities.setColorSchemeListener(changes::add);
+        assertNull(capabilities.getColorScheme());
+
+        // The background color decides while the terminal sends no color scheme report
+        capabilities.processCapabilityResponse("\033]11;rgb:1e1e/1e1e/2e2e\033\\");
+        assertEquals(ColorScheme.DARK, capabilities.getColorScheme());
+        capabilities.processCapabilityResponse("\033]11;rgba:ff/ff/f0/80\u0007");
+        assertEquals(ColorScheme.LIGHT, capabilities.getColorScheme());
+        capabilities.processCapabilityResponse("\033]11;#000000\u0007");
+        capabilities.processCapabilityResponse("\033]11;rgb:00000/0/0\u0007");
+        capabilities.processCapabilityResponse("\033]11;rgb:0/0\u0007");
+        assertEquals(ColorScheme.LIGHT, capabilities.getColorScheme());
+
+        // The color scheme report has priority, and a repeated report is not a change
+        capabilities.processCapabilityResponse("\033[?997;1n");
+        capabilities.processCapabilityResponse("\033[?997;1n");
+        assertEquals(ColorScheme.DARK, capabilities.getColorScheme());
+        capabilities.processCapabilityResponse("\033[?997;2n");
+        capabilities.processCapabilityResponse("\033]11;rgb:0/0/0\u0007");
+        assertEquals(ColorScheme.LIGHT, capabilities.getColorScheme());
+        assertEquals(Arrays.asList(ColorScheme.DARK, ColorScheme.LIGHT, ColorScheme.DARK, ColorScheme.LIGHT), changes);
     }
 
     @Test

@@ -25,11 +25,14 @@ import java.util.List;
  * <ul>
  *     <li>{@code ESC [ ? <digits and ;> $ y}: mode report (DECRPM)</li>
  *     <li>{@code ESC [ ? <digits and ;> c}: primary device attributes (DA1)</li>
+ *     <li>{@code ESC [ ? <digits and ;> n}: device status report (DSR), such as the color scheme report</li>
  *     <li>{@code ESC P > | <printable text> ESC \}: terminal version (XTVERSION)</li>
+ *     <li>{@code ESC ] 11 ; <printable text>} and {@code BEL} or {@code ESC \}: default background color (OSC 11)</li>
  * </ul>
  */
 public class TerminalResponsePattern implements CharacterPattern {
     private static final char ESC = 0x1b;
+    private static final char BEL = 0x07;
     private static final int MAX_LENGTH = 256;
 
     @Override
@@ -46,7 +49,10 @@ public class TerminalResponsePattern implements CharacterPattern {
             return matchModeReport(seq);
         }
         if(kind == 'P') {
-            return matchVersion(seq);
+            return matchString(seq, ">|", false);
+        }
+        if(kind == ']') {
+            return matchString(seq, "11;", true);
         }
         return null;
     }
@@ -64,7 +70,7 @@ public class TerminalResponsePattern implements CharacterPattern {
             if((c >= '0' && c <= '9') || c == ';') {
                 continue;
             }
-            if(c == 'c') {
+            if(c == 'c' || c == 'n') {
                 return i == size - 1 ? new Matching(new TerminalResponse(text(seq))) : null;
             }
             if(c == '$') {
@@ -78,15 +84,18 @@ public class TerminalResponsePattern implements CharacterPattern {
         return Matching.NOT_YET;
     }
 
-    private static Matching matchVersion(List<Character> seq) {
+    /** Matches a string reply: the prefix, printable text, then {@code ESC \} or, if allowed, {@code BEL}. */
+    private static Matching matchString(List<Character> seq, String prefix, boolean belTerminates) {
         int size = seq.size();
-        String prefix = ">|";
         for(int i = 2; i < size; i++) {
             char c = seq.get(i);
-            if(i < 4) {
+            if(i < 2 + prefix.length()) {
                 if(c != prefix.charAt(i - 2)) {
                     return null;
                 }
+            }
+            else if(c == BEL && belTerminates) {
+                return i == size - 1 ? new Matching(new TerminalResponse(text(seq))) : null;
             }
             else if(c == ESC) {
                 if(i == size - 1) {

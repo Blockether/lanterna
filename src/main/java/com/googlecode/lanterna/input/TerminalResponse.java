@@ -19,8 +19,9 @@
 package com.googlecode.lanterna.input;
 
 /**
- * A terminal reply to a capability query: a mode report (DECRPM), the primary device attributes (DA1) or the
- * terminal version (XTVERSION). It is not a key that the user pressed.
+ * A terminal reply to a capability query: a mode report (DECRPM), the primary device attributes (DA1), a device
+ * status report (DSR), the terminal version (XTVERSION) or the default background color (OSC 11). It is not a key
+ * that the user pressed.
  */
 public class TerminalResponse extends KeyStroke {
     private final String sequence;

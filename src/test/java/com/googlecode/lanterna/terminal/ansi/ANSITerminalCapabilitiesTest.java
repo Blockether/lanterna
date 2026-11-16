@@ -21,6 +21,7 @@ package com.googlecode.lanterna.terminal.ansi;
 import com.googlecode.lanterna.TerminalPosition;
 import com.googlecode.lanterna.UnicodeWidth;
 import com.googlecode.lanterna.UnicodeWidth.WidthMethod;
+import com.googlecode.lanterna.terminal.ansi.TerminalCapabilities.ColorScheme;
 import com.googlecode.lanterna.input.KeyStroke;
 import com.googlecode.lanterna.input.KeyType;
 import com.googlecode.lanterna.input.TerminalResponse;
@@ -34,7 +35,10 @@ import java.io.InputStream;
 import java.io.PipedInputStream;
 import java.io.PipedOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -44,7 +48,7 @@ import static org.junit.Assert.assertTrue;
 
 public class ANSITerminalCapabilitiesTest {
 
-    private static final String QUERY = "\033[>0q\033[?25l\033[s\033[6n\033[?2027$p"
+    private static final String QUERY = "\033[>0q\033[?996n\033]11;?\033\\\033[?25l\033[s\033[6n\033[?2027$p"
             + "\033[H\033]66;w=1; \033\\\033[6n\033[H\033]66;s=2; \033\\\033[6n\033[u\033[c";
 
     @After
@@ -155,6 +159,34 @@ public class ANSITerminalCapabilitiesTest {
     }
 
     @Test
+    public void followsTheColorSchemeOfTheTerminal() throws Exception {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        ANSITerminal terminal = terminal(replies("\033[?997;2n\033]11;rgb:0000/0000/0000\033\\\033[?62;22c"
+                + "\033[?997;1ny"), output);
+        TerminalCapabilities capabilities = emptyEnvironment();
+        List<ColorScheme> changes = new ArrayList<>();
+        capabilities.setColorSchemeListener(changes::add);
+        terminal.setTerminalCapabilities(capabilities);
+
+        terminal.enterPrivateMode();
+
+        // The report has priority over the dark background. The terminal reports a later change as input, and
+        // the application does not get the report
+        KeyStroke key = terminal.pollInput();
+        assertEquals(Character.valueOf('y'), key.getCharacter());
+        assertNull(terminal.pollInput());
+        assertEquals(Arrays.asList(ColorScheme.LIGHT, ColorScheme.DARK), changes);
+        assertEquals(ColorScheme.DARK, capabilities.getColorScheme());
+
+        terminal.exitPrivateMode();
+        String control = output.toString(StandardCharsets.UTF_8.name());
+        assertEquals(1, count(control, TerminalCapabilities.COLOR_SCHEME_UPDATES_SET));
+        assertEquals(1, count(control, TerminalCapabilities.COLOR_SCHEME_UPDATES_RESET));
+        assertTrue(control.indexOf(TerminalCapabilities.COLOR_SCHEME_UPDATES_SET)
+                < control.indexOf(TerminalCapabilities.COLOR_SCHEME_UPDATES_RESET));
+    }
+
+    @Test
     public void givesRepliesToTheApplicationWithoutDetection() throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream();
         ANSITerminal terminal = terminal(replies("\033[?62;22c"), output);
@@ -162,6 +194,7 @@ public class ANSITerminalCapabilitiesTest {
 
         terminal.enterPrivateMode();
         assertFalse(output.toString(StandardCharsets.UTF_8.name()).contains("\033[c"));
+        assertFalse(output.toString(StandardCharsets.UTF_8.name()).contains(TerminalCapabilities.COLOR_SCHEME_UPDATES_SET));
 
         KeyStroke key = terminal.pollInput();
         assertEquals(KeyType.TerminalResponse, key.getKeyType());

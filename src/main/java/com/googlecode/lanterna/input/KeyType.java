@@ -83,8 +83,8 @@ public enum KeyType {
      */
     CursorLocation,
     /**
-     * This value is only used internally within Lanterna for a terminal reply to a capability query (DECRPM, DA1 or
-     * XTVERSION), see {@link TerminalResponse}.
+     * This value is only used internally within Lanterna for a terminal reply to a capability query (DECRPM, DA1, DSR,
+     * XTVERSION or OSC 11), see {@link TerminalResponse}.
      */
     TerminalResponse,
     /**

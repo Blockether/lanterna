@@ -24,6 +24,7 @@ import com.googlecode.lanterna.UnicodeWidth.WidthMethod;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /**
  * Detects how the terminal measures and draws wide text. This is a port of the width rules in the opentui
@@ -33,6 +34,8 @@ import java.util.Map;
  * <p>
  * The environment variables {@code OPENTUI_FORCE_WCWIDTH}, {@code OPENTUI_FORCE_UNICODE},
  * {@code OPENTUI_FORCE_NOZWJ} and {@code OPENTUI_FORCE_EXPLICIT_WIDTH} override the detection, as in opentui.
+ * <p>
+ * It also detects the color scheme of the terminal, see {@link #getColorScheme()}.
  */
 public final class TerminalCapabilities {
 
@@ -42,6 +45,12 @@ public final class TerminalCapabilities {
         TMUX,
         ZELLIJ,
         SCREEN
+    }
+
+    /** The color scheme of the terminal: light text on a dark background, or dark text on a light background. */
+    public enum ColorScheme {
+        DARK,
+        LIGHT
     }
 
     /** Queries the terminal version (XTVERSION). */
@@ -57,6 +66,18 @@ public final class TerminalCapabilities {
     static final String SCALED_TEXT_QUERY = "\033]66;s=2; \033\\";
     /** Turns on grapheme cluster mode 2027. */
     public static final String UNICODE_SET = "\033[?2027h";
+    /** Asks for the color scheme (DSR 996). The reply is {@code ESC[?997;1n} for dark and {@code ESC[?997;2n} for light. */
+    static final String COLOR_SCHEME_QUERY = "\033[?996n";
+    /** Asks for the default background color (OSC 11). The reply is {@code ESC]11;rgb:RRRR/GGGG/BBBB} and a terminator. */
+    static final String BACKGROUND_COLOR_QUERY = "\033]11;?\033\\";
+    /** Turns on mode 2031: the terminal sends the color scheme report again each time its color scheme changes. */
+    public static final String COLOR_SCHEME_UPDATES_SET = "\033[?2031h";
+    /** Turns off mode 2031. */
+    public static final String COLOR_SCHEME_UPDATES_RESET = "\033[?2031l";
+
+    private static final String COLOR_SCHEME_DARK_REPORT = "\033[?997;1n";
+    private static final String COLOR_SCHEME_LIGHT_REPORT = "\033[?997;2n";
+    private static final String BACKGROUND_COLOR_REPORT = "\033]11;";
 
     private static final int NAME_LENGTH = 64;
     private static final int VERSION_LENGTH = 32;
@@ -76,6 +97,9 @@ public final class TerminalCapabilities {
     private boolean startupCursorQueryPending = false;
     private int explicitWidthProbeReportsPending = 0;
     private Boolean unicodeWideLocked = null;
+    private ColorScheme reportedColorScheme = null;
+    private ColorScheme backgroundColorScheme = null;
+    private volatile Consumer<ColorScheme> colorSchemeListener = null;
 
     /** Creates the capabilities for the environment of this process. */
     public TerminalCapabilities() {
@@ -140,6 +164,24 @@ public final class TerminalCapabilities {
         return fromXtversion;
     }
 
+    /**
+     * Gives the color scheme of the terminal. The color scheme report (DSR 997) is the source when the terminal
+     * sends it. Else the lightness of the default background color (OSC 11) decides.
+     * @return Detected color scheme, or {@code null} if the terminal answered neither query
+     */
+    public synchronized ColorScheme getColorScheme() {
+        return reportedColorScheme != null ? reportedColorScheme : backgroundColorScheme;
+    }
+
+    /**
+     * Sets the listener for a change of {@link #getColorScheme()}. The thread that reads the terminal input calls
+     * it. A terminal with mode 2031 reports each change of its color scheme while the application runs.
+     * @param listener Receiver of the new color scheme, or {@code null} for none
+     */
+    public void setColorSchemeListener(Consumer<ColorScheme> listener) {
+        this.colorSchemeListener = listener;
+    }
+
     /** @return {@code true} while a query still waits for cursor position reports */
     public synchronized boolean isAwaitingCursorPositionReports() {
         return startupCursorQueryPending || explicitWidthProbeReportsPending > 0;
@@ -168,7 +210,8 @@ public final class TerminalCapabilities {
         startupCursorQueryPending = true;
 
         StringBuilder query = new StringBuilder();
-        query.append(XTVERSION).append(HIDE_CURSOR).append(SAVE_CURSOR_STATE);
+        query.append(XTVERSION).append(COLOR_SCHEME_QUERY).append(BACKGROUND_COLOR_QUERY);
+        query.append(HIDE_CURSOR).append(SAVE_CURSOR_STATE);
         query.append(CURSOR_POSITION_REQUEST);
         query.append(UNICODE_QUERY);
         if(!skipExplicitWidthQuery) {
@@ -430,7 +473,67 @@ public final class TerminalCapabilities {
      * Processes one terminal reply (opentui {@code processCapabilityResponse}).
      * @param response Raw reply, for example {@code ESC[?2027;2$y}, {@code ESC[1;2R} or {@code ESC P>|kitty(0.40.1)ESC\}
      */
-    public synchronized void processCapabilityResponse(String response) {
+    public void processCapabilityResponse(String response) {
+        ColorScheme changed;
+        synchronized(this) {
+            ColorScheme before = getColorScheme();
+            applyCapabilityResponse(response);
+            processColorSchemeResponse(response);
+            ColorScheme after = getColorScheme();
+            changed = after != before ? after : null;
+        }
+        Consumer<ColorScheme> listener = colorSchemeListener;
+        if(changed != null && listener != null) {
+            listener.accept(changed);
+        }
+    }
+
+    private void processColorSchemeResponse(String response) {
+        if(response.contains(COLOR_SCHEME_DARK_REPORT)) {
+            reportedColorScheme = ColorScheme.DARK;
+        }
+        else if(response.contains(COLOR_SCHEME_LIGHT_REPORT)) {
+            reportedColorScheme = ColorScheme.LIGHT;
+        }
+        int background = response.indexOf(BACKGROUND_COLOR_REPORT);
+        if(background >= 0) {
+            ColorScheme scheme = colorSchemeOf(response.substring(background + BACKGROUND_COLOR_REPORT.length()));
+            if(scheme != null) {
+                backgroundColorScheme = scheme;
+            }
+        }
+    }
+
+    /**
+     * Reads an X11 color such as {@code rgb:1e1e/1e1e/2e2e}: one to four hexadecimal digits for each channel, and
+     * text after the last channel is ignored.
+     * @return {@code LIGHT} if the color is lighter than middle gray, else {@code DARK}; {@code null} for other text
+     */
+    static ColorScheme colorSchemeOf(String color) {
+        int start = color.startsWith("rgba:") ? 5 : color.startsWith("rgb:") ? 4 : -1;
+        if(start < 0) {
+            return null;
+        }
+        double[] channels = new double[3];
+        int pos = start;
+        for(int i = 0; i < 3; i++) {
+            int end = pos;
+            while(end < color.length() && Character.digit(color.charAt(end), 16) >= 0) {
+                end++;
+            }
+            int digits = end - pos;
+            if(digits < 1 || digits > 4 || (i < 2 && (end >= color.length() || color.charAt(end) != '/'))) {
+                return null;
+            }
+            channels[i] = Integer.parseInt(color.substring(pos, end), 16) / (double) ((1 << (4 * digits)) - 1);
+            pos = end + 1;
+        }
+        // Perceived lightness (ITU-R BT.601 luma)
+        double lightness = 0.299 * channels[0] + 0.587 * channels[1] + 0.114 * channels[2];
+        return lightness > 0.5 ? ColorScheme.LIGHT : ColorScheme.DARK;
+    }
+
+    private void applyCapabilityResponse(String response) {
         if(response.contains("2027;2$y")) {
             unicode = WidthMethod.UNICODE;
         }

@@ -59,6 +59,7 @@ public abstract class ANSITerminal extends StreamBasedTerminal implements Extend
     private volatile TerminalCapabilities terminalCapabilities;
     private volatile boolean primaryDeviceAttributesSeen;
     private volatile boolean capabilityQueryActive;
+    private boolean colorSchemeUpdates;
     private long capabilityQueryTimeoutMillis = 1000;
 
     @SuppressWarnings("WeakerAccess")
@@ -257,6 +258,8 @@ public abstract class ANSITerminal extends StreamBasedTerminal implements Extend
             updateWin32InputMode(true);
         }
         if(capabilities != null) {
+            writeToTerminal(TerminalCapabilities.COLOR_SCHEME_UPDATES_SET.getBytes(StandardCharsets.US_ASCII));
+            colorSchemeUpdates = true;
             writeDetectedFeatures(capabilities);
         }
         flush();
@@ -276,7 +279,8 @@ public abstract class ANSITerminal extends StreamBasedTerminal implements Extend
      * Turns on terminal capability detection, as in opentui. Then {@link #enterPrivateMode()} sends the capability
      * queries and waits for the replies, at most {@link #setCapabilityQueryTimeout(long)} milliseconds. The detected
      * width method becomes the global {@link com.googlecode.lanterna.UnicodeWidth} method, and
-     * {@link com.googlecode.lanterna.screen.TerminalScreen} draws wide text as the terminal needs. The terminal
+     * {@link com.googlecode.lanterna.screen.TerminalScreen} draws wide text as the terminal needs. The private mode
+     * also turns on mode 2031, so {@link TerminalCapabilities#getColorScheme()} follows the terminal. The terminal
      * replies are not given to the application. The queries write a space at the top-left cell of the main screen.
      * @param capabilities Capabilities to detect, or {@code null} to turn detection off
      */
@@ -355,6 +359,10 @@ public abstract class ANSITerminal extends StreamBasedTerminal implements Extend
         }
         if (modifyOtherKeys) {
             updateModifyOtherKeys(false);
+        }
+        if (colorSchemeUpdates) {
+            writeToTerminal(TerminalCapabilities.COLOR_SCHEME_UPDATES_RESET.getBytes(StandardCharsets.US_ASCII));
+            colorSchemeUpdates = false;
         }
         writeCSISequenceToTerminal((byte) '?', (byte) '2', (byte) '0', (byte) '0', (byte) '4', (byte) 'l');
         writeCSISequenceToTerminal((byte) '?', (byte) '1', (byte) '0', (byte) '4', (byte) '9', (byte) 'l');

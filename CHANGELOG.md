@@ -11,6 +11,18 @@
 > and a complete HTML terminal backend. It remains a drop-in replacement for
 > `com.googlecode.lanterna:lanterna:3.1.5` and adds focused public packages.
 
+### `3.1.5-vis.63`
+
+- Add `TerminalCapabilities.getColorScheme()`: `DARK`, `LIGHT` or `null`. The capability
+  query now asks for the color scheme (`CSI ? 996 n`) and for the default background
+  color (`OSC 11 ; ?`). The color scheme report has priority. Without it, the lightness
+  of the background color decides.
+- Add `TerminalCapabilities.setColorSchemeListener`. `ANSITerminal` turns on mode 2031
+  in the private mode when capability detection is on, so the terminal reports each
+  change of its color scheme. The listener gets the new value.
+- `TerminalResponsePattern` decodes the color scheme report (`CSI ? 997 ; Ps n`) and
+  the background color reply (`OSC 11`). They were Alt+[ or Alt+] and text before.
+
 ### `3.1.5-vis.62`
 
 - Add `InlineSpans`: the one owner of the inline-span sentinels U+E110..U+E11B (bold,
