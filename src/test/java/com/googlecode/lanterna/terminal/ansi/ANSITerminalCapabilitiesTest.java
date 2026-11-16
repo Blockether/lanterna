@@ -186,6 +186,111 @@ public class ANSITerminalCapabilitiesTest {
                 < control.indexOf(TerminalCapabilities.COLOR_SCHEME_UPDATES_RESET));
     }
 
+    /** The input of a terminal that answers later: the test adds each reply. */
+    private static final class Replies extends InputStream {
+        private final java.util.concurrent.ConcurrentLinkedQueue<Integer> bytes =
+                new java.util.concurrent.ConcurrentLinkedQueue<>();
+
+        void add(String text) {
+            for(byte b: text.getBytes(StandardCharsets.UTF_8)) {
+                bytes.add(b & 0xff);
+            }
+        }
+
+        @Override
+        public int available() {
+            return bytes.size();
+        }
+
+        @Override
+        public int read() {
+            Integer next = bytes.poll();
+            return next == null ? -1 : next;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) {
+            int count = 0;
+            while(count < length && !bytes.isEmpty()) {
+                buffer[offset + count++] = (byte) (int) bytes.poll();
+            }
+            return count;
+        }
+    }
+
+    private static KeyStroke pollFor(ANSITerminal terminal, int millis) throws Exception {
+        long end = System.nanoTime() + millis * 1_000_000L;
+        KeyStroke key = null;
+        while(key == null && System.nanoTime() < end) {
+            key = terminal.pollInput();
+            if(key == null) {
+                Thread.sleep(2);
+            }
+        }
+        return key;
+    }
+
+    @Test
+    public void theEscapeOfADueColorSchemeReplyIsNotAnEscapeKey() throws Exception {
+        Replies replies = new Replies();
+        replies.add("\033]11;rgb:ffff/ffff/ffff\033\\\033[?62;22c");
+        ANSITerminal terminal = terminal(replies, new ByteArrayOutputStream());
+        TerminalCapabilities capabilities = emptyEnvironment();
+        terminal.setTerminalCapabilities(capabilities);
+        terminal.enterPrivateMode();
+
+        // The reply to the query comes in two parts, with the escape character alone in the first part.
+        terminal.queryColorScheme();
+        replies.add("\033");
+        assertNull(pollFor(terminal, 150));
+        replies.add("]11;rgb:1010/1010/1010\007y");
+        assertEquals(Character.valueOf('y'), pollFor(terminal, 500).getCharacter());
+        assertEquals(ColorScheme.DARK, capabilities.getColorScheme());
+
+        // No reply is due now: the escape character is the Escape key again.
+        replies.add("\033");
+        assertEquals(KeyType.Escape, pollFor(terminal, 500).getKeyType());
+        terminal.exitPrivateMode();
+    }
+
+    @Test
+    public void asksATerminalWithoutReportsForItsColorSchemeAgain() throws Exception {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        Replies replies = new Replies();
+        replies.add("\033]11;rgb:ffff/ffff/ffff\033\\\033[?62;22c");
+        ANSITerminal terminal = terminal(replies, output);
+        TerminalCapabilities capabilities = emptyEnvironment();
+        List<ColorScheme> changes = new ArrayList<>();
+        capabilities.setColorSchemeListener(changes::add);
+        terminal.setTerminalCapabilities(capabilities);
+
+        terminal.queryColorScheme();
+        assertEquals(0, output.size());
+
+        terminal.enterPrivateMode();
+        assertFalse(capabilities.hasColorSchemeReports());
+        assertEquals(ColorScheme.LIGHT, capabilities.getColorScheme());
+
+        terminal.queryColorScheme();
+        assertEquals(2, count(output.toString(StandardCharsets.UTF_8.name()), TerminalCapabilities.BACKGROUND_COLOR_QUERY));
+        replies.add("\033]11;rgb:1010/1010/1010\007y");
+        assertEquals(Character.valueOf('y'), terminal.pollInput().getCharacter());
+        assertEquals(Arrays.asList(ColorScheme.LIGHT, ColorScheme.DARK), changes);
+
+        // The reply to the last query comes when the application reads no input. It must not stay for the shell.
+        terminal.queryColorScheme();
+        replies.add("\033]11;rgb:ffff/ffff/ffff\007");
+        terminal.exitPrivateMode();
+        assertEquals(0, replies.available());
+        assertEquals(ColorScheme.LIGHT, capabilities.getColorScheme());
+
+        ANSITerminal reporting = terminal(replies("\033[?997;1n\033[?62;22c"), new ByteArrayOutputStream());
+        TerminalCapabilities reported = emptyEnvironment();
+        reporting.setTerminalCapabilities(reported);
+        reporting.enterPrivateMode();
+        assertTrue(reported.hasColorSchemeReports());
+    }
+
     @Test
     public void givesRepliesToTheApplicationWithoutDetection() throws Exception {
         ByteArrayOutputStream output = new ByteArrayOutputStream();

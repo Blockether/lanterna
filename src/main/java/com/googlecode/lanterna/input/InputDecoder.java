@@ -42,6 +42,11 @@ public class InputDecoder {
     private final List<Character> currentMatching;
     private boolean seenEOF;
     private int timeoutMillis;
+    private int replyTimeoutMillis;
+    private long replyDeadlineNanos;
+    private volatile long replyDueNanos;
+    private long escapeDeadlineNanos;
+    private boolean escapeAlone;
 
     /**
      * Creates a new input decoder using a specified Reader as the source to read characters from
@@ -53,6 +58,8 @@ public class InputDecoder {
         this.currentMatching = new ArrayList<>();
         this.seenEOF = false;
         this.timeoutMillis = 50;
+        this.replyTimeoutMillis = 1000;
+        this.replyDeadlineNanos = 0;
     }
 
     /**
@@ -103,6 +110,32 @@ public class InputDecoder {
         return timeoutMillis;
     }
 
+    /**
+     * Sets how long the start of a terminal reply waits for the rest of that reply. A reply to a query, such as the
+     * default background color, can come in parts on a slow line. No key sends such a start, so the wait is longer
+     * than {@link #setEscapeSequenceTimeoutMillis(int)}. A reply that does not end in this time is still given as a
+     * {@link TerminalResponse}, never as typed text.
+     */
+    public void setTerminalReplyTimeoutMillis(int millis) {
+        replyTimeoutMillis = Math.max(0, Math.min(60_000, millis));
+    }
+
+    public int getTerminalReplyTimeoutMillis() {
+        return replyTimeoutMillis;
+    }
+
+    /**
+     * Says that the reply to a query is due for at most the given time. While it is due, a lone escape character
+     * waits for its rest: it is probably the start of the reply, which came in parts. Without a due reply it is the
+     * Escape key after {@link #setEscapeSequenceTimeoutMillis(int)}. A key that comes while it waits, later than
+     * that timeout, makes it the Escape key at once, and the key stays a key. Call this before the query is
+     * written, and with 0 when the reply has come. Another thread than the reader can call it.
+     * @param millis Time in milliseconds, or 0 when no reply is due
+     */
+    public void setTerminalReplyDue(long millis) {
+        replyDueNanos = millis <= 0 ? 0 : System.nanoTime() + Math.min(60_000, millis) * 1_000_000L;
+    }
+
     /** Sets the legacy timeout in quarter-second units. */
     public void setTimeoutUnits(int units) {
         setEscapeSequenceTimeoutMillis(Math.max(0, Math.min(240, units)) * 250);
@@ -145,17 +178,42 @@ public class InputDecoder {
                 //   then we poll for the configured number of timeout units:
                 // It would be much better, if we could just read with a timeout,
                 //   but lacking that, we wait 1/4s units and check for readiness.
-                if (bestMatch != null) {
-                    long deadline = System.nanoTime() + timeoutMillis * 1_000_000L;
-                    while (!source.ready() && System.nanoTime() < deadline) {
-                        try {
-                            Thread.sleep(1);
-                        }
-                        catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            break;
-                        }
+                // The start of a terminal reply waits longer for its rest: no key sends such a start.
+                boolean replyStart = bestMatch != null && TerminalResponsePattern.isReplyStart(currentMatching);
+                // A lone escape character while a reply is due is probably the start of that reply.
+                long dueNanos = replyDueNanos;
+                boolean escapeOfReply = !replyStart && bestMatch != null && currentMatching.size() == 1
+                        && currentMatching.get(0) == 0x1b && System.nanoTime() < dueNanos;
+                if (replyStart) {
+                    if (replyDeadlineNanos == 0) {
+                        replyDeadlineNanos = System.nanoTime() + replyTimeoutMillis * 1_000_000L;
                     }
+                    if (!source.ready() && System.nanoTime() < replyDeadlineNanos) {
+                        if (!blockingIO) {
+                            // The characters stay in currentMatching for the next call.
+                            return null;
+                        }
+                        waitForInput(replyDeadlineNanos);
+                    }
+                }
+                else if (escapeOfReply) {
+                    // The rest of an escape sequence comes in the escape time. Later input is the rest of the
+                    // reply, or a new key after the Escape key.
+                    if (escapeDeadlineNanos == 0) {
+                        escapeDeadlineNanos = System.nanoTime() + timeoutMillis * 1_000_000L;
+                    }
+                    waitForInput(escapeDeadlineNanos);
+                    if (!source.ready()) {
+                        escapeAlone = true;
+                        if (!blockingIO) {
+                            // The character stays in currentMatching for the next call.
+                            return null;
+                        }
+                        waitForInput(dueNanos);
+                    }
+                }
+                else if (bestMatch != null) {
+                    waitForInput(System.nanoTime() + timeoutMillis * 1_000_000L);
                 }
                 // if input is available, we can just read a char without waiting,
                 // otherwise, for readInput() with no bestMatch found yet,
@@ -170,10 +228,22 @@ public class InputDecoder {
                         break;
                     }
                     currentMatching.add( (char)readChar );
+                    if (escapeAlone && currentMatching.size() == 2) {
+                        escapeAlone = false;
+                        if (!restOfReplyFollows((char)readChar)) {
+                            // The Escape key, then a new key. The new key stays for the next call.
+                            break;
+                        }
+                    }
                     curLen++;
                 } else { // no more available input at this time.
                     // already found something:
                     if (bestMatch != null) {
+                        if (replyStart) {
+                            // The reply did not end in time. It is still a reply, not typed text.
+                            bestMatch = new TerminalResponse(text(currentMatching));
+                            bestLen = curLen;
+                        }
                         break; // it's something...
                     }
                     // otherwise: no KeyStroke yet
@@ -207,12 +277,25 @@ public class InputDecoder {
             // no longer match possible at this point:
             else {
                 if (bestMatch != null ) {
+                    // A reply that another sequence cuts off is still a reply. The other sequence starts at
+                    // the character that ended the match, or at the escape character before it.
+                    int replyLen = curLen - 1;
+                    if (replyLen > bestLen && currentMatching.get(replyLen - 1) == 0x1b) {
+                        replyLen--;
+                    }
+                    if (replyLen > bestLen
+                            && TerminalResponsePattern.isReplyStart(currentMatching.subList(0, replyLen))) {
+                        bestMatch = new TerminalResponse(text(currentMatching.subList(0, replyLen)));
+                        bestLen = replyLen;
+                    }
                     // there was already a previous full-match, use it:
                     break;
                 } else { // invalid input!
                     // remove the whole fail and re-try finding a KeyStroke...
                     curSub.clear(); // or just 1 char?  currentMatching.remove(0);
                     curLen = 0;
+                    escapeDeadlineNanos = 0;
+                    escapeAlone = false;
                     //noinspection UnnecessaryContinue
                     continue;
                 }
@@ -230,7 +313,39 @@ public class InputDecoder {
 
         List<Character> bestSub = currentMatching.subList(0, bestLen );
         bestSub.clear(); // remove matched characters from input
+        replyDeadlineNanos = 0;
+        escapeDeadlineNanos = 0;
+        escapeAlone = false;
         return bestMatch;
+    }
+
+    /** Tells if the character after a lone escape character continues a reply: its rest comes with no gap. */
+    private boolean restOfReplyFollows(char second) throws IOException {
+        if (!TerminalResponsePattern.isReplyKind(second)) {
+            return false;
+        }
+        waitForInput(System.nanoTime() + timeoutMillis * 1_000_000L);
+        return source.ready();
+    }
+
+    private void waitForInput(long deadlineNanos) throws IOException {
+        while (!source.ready() && System.nanoTime() < deadlineNanos) {
+            try {
+                Thread.sleep(1);
+            }
+            catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+    }
+
+    private static String text(List<Character> characters) {
+        StringBuilder builder = new StringBuilder(characters.size());
+        for (char c : characters) {
+            builder.append(c);
+        }
+        return builder.toString();
     }
 
     private Matching getBestMatch(List<Character> characterSequence) {

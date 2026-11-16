@@ -11,6 +11,31 @@
 > and a complete HTML terminal backend. It remains a drop-in replacement for
 > `com.googlecode.lanterna:lanterna:3.1.5` and adds focused public packages.
 
+### `3.1.5-vis.64`
+
+- A terminal reply that comes in parts is never typed text. `InputDecoder` waits for the
+  rest of a reply that has started (`ESC [ ?`, `ESC P > |` or `ESC ] 11 ;`), at most
+  `setTerminalReplyTimeoutMillis` (default 1000 ms). A reply without its end, or a reply
+  that another sequence cuts off, is still a `TerminalResponse`. Before, a pause of more
+  than 50 ms in a reply gave Alt+] and the rest as text.
+- A key that comes after an OSC 11 reply without its end stays a key. The reply takes only
+  the characters of a color in the X11 form: `rgb:h/h/h` or `rgba:h/h/h/h`, with at most
+  four hexadecimal digits for each channel.
+- Add `InputDecoder.setTerminalReplyDue(millis)`: while a reply is due, a lone escape
+  character waits for its rest and is not the Escape key. `ANSITerminal` sets it for the
+  capability query and for `queryColorScheme()`, and clears it when the reply comes. A
+  terminal that did not answer the query before gets no wait. A key that comes while the
+  character waits, more than 50 ms after it, makes it the Escape key at once, and the key
+  stays a key. An Escape key with no key after it waits until the reply comes, at most
+  the due time. A report that the terminal
+  sends by itself, cut after its escape character for more than 50 ms, is still the
+  Escape key and text.
+- Add `ANSITerminal.queryColorScheme()`: ask for the color scheme again. Use it at an
+  interval for a terminal without mode 2031. `exitPrivateMode` waits at most 300 ms for
+  a reply that is still due, so the reply does not go to the shell.
+- Add `TerminalCapabilities.hasColorSchemeReports()`: true when the terminal sent a
+  color scheme report (DSR 997), and thus reports each change by itself.
+
 ### `3.1.5-vis.63`
 
 - Add `TerminalCapabilities.getColorScheme()`: `DARK`, `LIGHT` or `null`. The capability

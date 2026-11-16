@@ -77,7 +77,7 @@ public final class TerminalCapabilities {
 
     private static final String COLOR_SCHEME_DARK_REPORT = "\033[?997;1n";
     private static final String COLOR_SCHEME_LIGHT_REPORT = "\033[?997;2n";
-    private static final String BACKGROUND_COLOR_REPORT = "\033]11;";
+    static final String BACKGROUND_COLOR_REPORT = "\033]11;";
 
     private static final int NAME_LENGTH = 64;
     private static final int VERSION_LENGTH = 32;
@@ -171,6 +171,16 @@ public final class TerminalCapabilities {
      */
     public synchronized ColorScheme getColorScheme() {
         return reportedColorScheme != null ? reportedColorScheme : backgroundColorScheme;
+    }
+
+    /**
+     * Tells if the terminal sent a color scheme report (DSR 997). Such a terminal reports each later change by
+     * itself, with mode 2031. Another terminal shows a change only in the reply to
+     * {@link ANSITerminal#queryColorScheme()}.
+     * @return {@code true} if the terminal reports its color scheme
+     */
+    public synchronized boolean hasColorSchemeReports() {
+        return reportedColorScheme != null;
     }
 
     /**

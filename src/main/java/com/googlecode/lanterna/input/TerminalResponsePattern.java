@@ -29,11 +29,15 @@ import java.util.List;
  *     <li>{@code ESC P > | <printable text> ESC \}: terminal version (XTVERSION)</li>
  *     <li>{@code ESC ] 11 ; <printable text>} and {@code BEL} or {@code ESC \}: default background color (OSC 11)</li>
  * </ul>
+ * A color in the X11 form {@code rgb:h/h/h} or {@code rgba:h/h/h/h} has at most four hexadecimal digits for each
+ * channel. A character that cannot be a part of such a color is not a part of the reply: a key that comes after a
+ * reply without its end stays a key.
  */
 public class TerminalResponsePattern implements CharacterPattern {
     private static final char ESC = 0x1b;
     private static final char BEL = 0x07;
     private static final int MAX_LENGTH = 256;
+    private static final TerminalResponsePattern INSTANCE = new TerminalResponsePattern();
 
     @Override
     public Matching match(List<Character> seq) {
@@ -45,16 +49,41 @@ public class TerminalResponsePattern implements CharacterPattern {
             return Matching.NOT_YET;
         }
         char kind = seq.get(1);
+        if(!isReplyKind(kind)) {
+            return null;
+        }
         if(kind == '[') {
             return matchModeReport(seq);
         }
         if(kind == 'P') {
             return matchString(seq, ">|", false);
         }
-        if(kind == ']') {
-            return matchString(seq, "11;", true);
+        return matchString(seq, "11;", true);
+    }
+
+    /** Tells if a reply that this pattern recognizes has the character after its escape character. */
+    static boolean isReplyKind(char kind) {
+        return kind == '[' || kind == 'P' || kind == ']';
+    }
+
+    /**
+     * Tells if the characters are the start of a reply that this pattern recognizes, and long enough that no key
+     * sends them: {@code ESC [ ?}, {@code ESC P > |} or {@code ESC ] 1 1 ;}, then only characters of that reply.
+     * @param seq Characters read from the terminal
+     * @return {@code true} if more characters can complete a reply
+     */
+    static boolean isReplyStart(List<Character> seq) {
+        int size = seq.size();
+        if(size < 3 || seq.get(0) != ESC) {
+            return false;
         }
-        return null;
+        char kind = seq.get(1);
+        int unambiguous = kind == '[' ? 3 : kind == 'P' ? 4 : kind == ']' ? 5 : Integer.MAX_VALUE;
+        if(size < unambiguous) {
+            return false;
+        }
+        Matching matching = INSTANCE.match(seq);
+        return matching != null && matching.partialMatch && matching.fullMatch == null;
     }
 
     private static Matching matchModeReport(List<Character> seq) {
@@ -110,7 +139,34 @@ public class TerminalResponsePattern implements CharacterPattern {
                 return null;
             }
         }
+        if(belTerminates && size > 2 + prefix.length() && !canBeColor(text(seq.subList(2 + prefix.length(), size)))) {
+            return null;
+        }
         return Matching.NOT_YET;
+    }
+
+    /** Tells if more characters can make the text a color. Text that is not in the X11 form can always be one. */
+    private static boolean canBeColor(String text) {
+        int channels = text.startsWith("rgb:") ? 3 : text.startsWith("rgba:") ? 4 : 0;
+        if(channels == 0) {
+            return true;
+        }
+        String[] values = text.substring(text.indexOf(':') + 1).split("/", -1);
+        if(values.length > channels) {
+            return false;
+        }
+        for(int i = 0; i < values.length; i++) {
+            String value = values[i];
+            if(value.length() > 4 || (value.isEmpty() && i < values.length - 1)) {
+                return false;
+            }
+            for(int j = 0; j < value.length(); j++) {
+                if(Character.digit(value.charAt(j), 16) < 0) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private static String text(List<Character> seq) {

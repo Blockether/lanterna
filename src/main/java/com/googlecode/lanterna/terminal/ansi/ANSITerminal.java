@@ -43,6 +43,9 @@ public abstract class ANSITerminal extends StreamBasedTerminal implements Extend
 
     // Sent after the capability queries: every terminal answers it, so its reply ends the wait.
     private static final String PRIMARY_DEVICE_ATTRIBUTES_QUERY = "\033[c";
+    // How long the end of the private mode waits for the reply to a color scheme query.
+    private static final long COLOR_SCHEME_REPLY_WAIT_MILLIS = 300;
+    private static final long COLOR_SCHEME_REPLY_DUE_MILLIS = 1000;
 
     // How long leaving win32-input-mode waits for the reports of keys pressed before it.
     private static final long WIN32_INPUT_REPORTS_TIMEOUT_MILLIS = 500;
@@ -60,6 +63,8 @@ public abstract class ANSITerminal extends StreamBasedTerminal implements Extend
     private volatile boolean primaryDeviceAttributesSeen;
     private volatile boolean capabilityQueryActive;
     private boolean colorSchemeUpdates;
+    private volatile boolean colorSchemeReplyDue;
+    private volatile long colorSchemeQueryNanos;
     private long capabilityQueryTimeoutMillis = 1000;
 
     @SuppressWarnings("WeakerAccess")
@@ -266,11 +271,13 @@ public abstract class ANSITerminal extends StreamBasedTerminal implements Extend
         inPrivateMode = true;
         if(capabilities != null) {
             capabilityQueryActive = true;
+            getInputDecoder().setTerminalReplyDue(capabilityQueryTimeoutMillis);
             try {
                 readInputUntil(() -> primaryDeviceAttributesSeen, capabilityQueryTimeoutMillis);
             }
             finally {
                 capabilityQueryActive = false;
+                getInputDecoder().setTerminalReplyDue(0);
             }
         }
     }
@@ -303,6 +310,29 @@ public abstract class ANSITerminal extends StreamBasedTerminal implements Extend
         this.capabilityQueryTimeoutMillis = timeoutMillis;
     }
 
+    /**
+     * Asks the terminal for its color scheme again, in the private mode. The reply comes with the input: it
+     * changes {@link TerminalCapabilities#getColorScheme()} and the color scheme listener gets the change. Call it
+     * at an interval for a terminal without color scheme reports, see
+     * {@link TerminalCapabilities#hasColorSchemeReports()}. {@link #exitPrivateMode()} waits a short time for a
+     * reply that is still due, so the reply does not go to the shell.
+     * @throws IOException If there was an I/O error
+     */
+    public synchronized void queryColorScheme() throws IOException {
+        if(terminalCapabilities == null || !inPrivateMode) {
+            return;
+        }
+        colorSchemeQueryNanos = System.nanoTime();
+        if(!colorSchemeReplyDue) {
+            // A terminal that did not answer the query before gets no wait: its Escape key must not be late.
+            getInputDecoder().setTerminalReplyDue(COLOR_SCHEME_REPLY_DUE_MILLIS);
+        }
+        colorSchemeReplyDue = true;
+        writeToTerminal((TerminalCapabilities.COLOR_SCHEME_QUERY + TerminalCapabilities.BACKGROUND_COLOR_QUERY)
+                .getBytes(StandardCharsets.US_ASCII));
+        flush();
+    }
+
     @Override
     protected boolean consumeTerminalResponse(KeyStroke key) throws IOException {
         TerminalCapabilities capabilities = terminalCapabilities;
@@ -313,6 +343,12 @@ public abstract class ANSITerminal extends StreamBasedTerminal implements Extend
         if(key instanceof TerminalResponse) {
             TerminalResponse terminalResponse = (TerminalResponse) key;
             response = terminalResponse.getSequence();
+            if(response.startsWith(TerminalCapabilities.BACKGROUND_COLOR_REPORT)) {
+                colorSchemeReplyDue = false;
+                if(!capabilityQueryActive) {
+                    getInputDecoder().setTerminalReplyDue(0);
+                }
+            }
             if(terminalResponse.isPrimaryDeviceAttributes()) {
                 primaryDeviceAttributesSeen = true;
             }
@@ -371,6 +407,17 @@ public abstract class ANSITerminal extends StreamBasedTerminal implements Extend
         if (win32InputReportsPending) {
             consumeWin32InputReports();
         }
+        consumeDueColorSchemeReply();
+    }
+
+    /** Takes the reply to a recent {@link #queryColorScheme()} out of the input, so the shell does not get it. */
+    private void consumeDueColorSchemeReply() throws IOException {
+        long waitMillis = COLOR_SCHEME_REPLY_WAIT_MILLIS - (System.nanoTime() - colorSchemeQueryNanos) / 1_000_000L;
+        if(colorSchemeReplyDue && waitMillis > 0) {
+            readInputUntil(() -> !colorSchemeReplyDue, waitMillis);
+        }
+        colorSchemeReplyDue = false;
+        getInputDecoder().setTerminalReplyDue(0);
     }
 
     @Override

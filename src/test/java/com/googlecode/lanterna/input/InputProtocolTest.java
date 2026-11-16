@@ -266,6 +266,153 @@ public class InputProtocolTest {
         assertTrue(decoded instanceof MouseAction);
         assertEquals(new TerminalPosition(199, 49), ((MouseAction) decoded).getPosition());
     }
+    /** Gives each part of the input after its delay, as a terminal on a slow line does. Never ends. */
+    private static final class PartsReader extends java.io.Reader {
+        private final String[] parts;
+        private final long[] availableAt;
+        private int part = 0;
+        private int offset = 0;
+
+        PartsReader(Object... delaysAndParts) {
+            parts = new String[delaysAndParts.length / 2];
+            availableAt = new long[parts.length];
+            long at = System.nanoTime();
+            for (int i = 0; i < parts.length; i++) {
+                at += ((Integer) delaysAndParts[2 * i]) * 1_000_000L;
+                availableAt[i] = at;
+                parts[i] = (String) delaysAndParts[2 * i + 1];
+            }
+        }
+
+        @Override
+        public boolean ready() {
+            return part < parts.length && System.nanoTime() >= availableAt[part];
+        }
+
+        @Override
+        public int read(char[] buffer, int start, int length) {
+            if (!ready() || length == 0) {
+                throw new IllegalStateException("The decoder read without input");
+            }
+            buffer[start] = parts[part].charAt(offset++);
+            if (offset == parts[part].length()) {
+                part++;
+                offset = 0;
+            }
+            return 1;
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    private static InputDecoder decoder(Object... delaysAndParts) {
+        InputDecoder decoder = new InputDecoder(new PartsReader(delaysAndParts));
+        decoder.addProfile(new DefaultKeyDecodingProfile());
+        decoder.setTerminalReplyTimeoutMillis(400);
+        return decoder;
+    }
+
+    private static List<KeyStroke> pollFor(int millis, Object... delaysAndParts) throws Exception {
+        return pollFor(decoder(delaysAndParts), millis);
+    }
+
+    private static List<KeyStroke> pollFor(InputDecoder decoder, int millis) throws Exception {
+        List<KeyStroke> keys = new java.util.ArrayList<>();
+        long end = System.nanoTime() + millis * 1_000_000L;
+        while (System.nanoTime() < end) {
+            KeyStroke key = decoder.getNextCharacter(false);
+            if (key == null) {
+                Thread.sleep(2);
+            } else {
+                keys.add(key);
+            }
+        }
+        return keys;
+    }
+
+    private static String describe(List<KeyStroke> keys) {
+        StringBuilder text = new StringBuilder();
+        for (KeyStroke key : keys) {
+            text.append(key instanceof TerminalResponse
+                    ? "<" + ((TerminalResponse) key).getSequence().replace("\u001b", "ESC") + ">"
+                    : key.getKeyType() == KeyType.Character ? String.valueOf(key.getCharacter())
+                    : "{" + key.getKeyType() + "}");
+        }
+        return text.toString();
+    }
+
+    @Test
+    public void aTerminalReplyInPartsIsNeverTypedText() throws Exception {
+        assertEquals("<ESC]11;rgb:ffff/ffff/ffffESC\\>x",
+                describe(pollFor(900, 0, "\u001b]11;rgb:ffff/", 300, "ffff/ffff\u001b\\", 20, "x")));
+        assertEquals("<ESC[?997;1n>x",
+                describe(pollFor(900, 0, "\u001b[?99", 300, "7;1n", 20, "x")));
+    }
+
+    @Test
+    public void aTerminalReplyWithoutItsEndIsNeverTypedText() throws Exception {
+        assertEquals("<ESC]11;rgb:0000/0000/0000>",
+                describe(pollFor(900, 0, "\u001b]11;rgb:0000/0000/0000")));
+        assertEquals("<ESC]11;rgb:0000/0000/0000>{ArrowUp}x",
+                describe(pollFor(900, 0, "\u001b]11;rgb:0000/0000/0000", 100, "\u001b[A", 500, "x")));
+    }
+
+    @Test
+    public void keysAfterATerminalReplyWithoutItsEndAreNotLost() throws Exception {
+        // The reply timeout is 400 ms: the keys must not wait for it, and must not become a part of the reply.
+        assertEquals("<ESC]11;rgb:0000/0000/0000>abz",
+                describe(pollFor(250, 0, "\u001b]11;rgb:0000/0000/0000", 20, "a", 50, "b", 50, "z")));
+        assertEquals("<ESC]11;rgba:00/00/00/00>x",
+                describe(pollFor(250, 0, "\u001b]11;rgba:00/00/00/00", 20, "x")));
+    }
+
+    @Test
+    public void theEscapeOfADueTerminalReplyWaitsForItsRest() throws Exception {
+        InputDecoder due = decoder(0, "\u001b", 150, "]11;rgb:ffff/ffff/ffff\u001b\\", 20, "x");
+        due.setTerminalReplyDue(1000);
+        assertEquals("<ESC]11;rgb:ffff/ffff/ffffESC\\>x", describe(pollFor(due, 500)));
+
+        // The reply does not come: the character is the Escape key when the reply is not due any more.
+        InputDecoder late = decoder(0, "\u001b");
+        late.setTerminalReplyDue(150);
+        assertEquals("", describe(pollFor(late, 100)));
+        assertEquals("{Escape}", describe(pollFor(late, 400)));
+    }
+
+    @Test
+    public void anEscapeKeyWhileATerminalReplyIsDueKeepsTheKeyAfterIt() throws Exception {
+        // A key that comes later than an escape sequence can: the Escape key and that key, not Alt and that key.
+        InputDecoder typed = decoder(0, "\u001b", 120, "z");
+        typed.setTerminalReplyDue(1000);
+        assertEquals("{Escape}z", describe(pollFor(typed, 400)));
+
+        // The Escape key, then the whole reply.
+        InputDecoder answered = decoder(0, "\u001b", 120, "\u001b]11;rgb:ffff/ffff/ffff\u001b\\");
+        answered.setTerminalReplyDue(1000);
+        assertEquals("{Escape}<ESC]11;rgb:ffff/ffff/ffffESC\\>", describe(pollFor(answered, 400)));
+
+        // The Escape key, then a key that is also the second character of a reply, with no rest.
+        InputDecoder bracket = decoder(0, "\u001b", 120, "]", 200, "x");
+        bracket.setTerminalReplyDue(1000);
+        assertEquals("{Escape}]x", describe(pollFor(bracket, 600)));
+    }
+
+    @Test
+    public void anEscapeKeyDoesNotWaitForATerminalReply() throws Exception {
+        long start = System.nanoTime();
+        InputDecoder decoder = new InputDecoder(new PartsReader(0, "\u001b]"));
+        decoder.addProfile(new DefaultKeyDecodingProfile());
+        KeyStroke key = null;
+        while (key == null) {
+            key = decoder.getNextCharacter(false);
+        }
+        assertEquals(Character.valueOf(']'), key.getCharacter());
+        assertTrue(key.isAltDown());
+        assertTrue((System.nanoTime() - start) < 300_000_000L);
+    }
+
     @Test
     public void keystrokesExposePasteTextWithoutApplicationDecoding() {
         assertEquals("x", new KeyStroke('x', false, false).getText());
