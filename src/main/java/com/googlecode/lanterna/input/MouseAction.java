@@ -50,7 +50,8 @@ public class MouseAction extends KeyStroke {
      * Constructs a MouseAction based on an action type, a button and a location on the screen
      * @param actionType The kind of mouse event
      * @param button Which button is involved (no button = 0, left button = 1, middle (wheel) button = 2,
-     *               right button = 3, scroll wheel up = 4, scroll wheel down = 5)
+     *               right button = 3, scroll wheel up = 4, scroll wheel down = 5, scroll left = 6,
+     *               scroll right = 7)
      * @param position Where in the terminal is the mouse cursor located
      */
     public MouseAction(MouseActionType actionType, int button, TerminalPosition position) {
@@ -62,7 +63,15 @@ public class MouseAction extends KeyStroke {
      * Button identity and count are separate: wheel buttons remain 4/5 even when several events are merged.
      */
     public MouseAction(MouseActionType actionType, int button, TerminalPosition position, int count) {
-        super(KeyType.MouseEvent, false, false);
+        this(actionType, button, position, count, false, false, false);
+    }
+
+    /**
+     * Constructs a mouse event with the modifier keys that the terminal reported with it.
+     */
+    public MouseAction(MouseActionType actionType, int button, TerminalPosition position, int count,
+                       boolean ctrlDown, boolean altDown, boolean shiftDown) {
+        super(KeyType.MouseEvent, ctrlDown, altDown, shiftDown);
         if (count <= 0) throw new IllegalArgumentException("MouseAction count must be positive: " + count);
         this.actionType = Objects.requireNonNull(actionType, "actionType");
         this.button = button;
@@ -88,6 +97,8 @@ public class MouseAction extends KeyStroke {
      *     <li>Right button = 3</li>
      *     <li>Wheel up = 4</li>
      *     <li>Wheel down = 5</li>
+     *     <li>Scroll left = 6</li>
+     *     <li>Scroll right = 7</li>
      * </ul>
      * @return The button which is clicked down when this event was generated
      */
@@ -108,11 +119,23 @@ public class MouseAction extends KeyStroke {
         return count;
     }
 
-    /** Returns signed wheel steps, or zero when this is not a wheel action. */
+    /** Returns signed vertical wheel steps, or zero when this is not a vertical wheel action. */
     public int getScrollDelta() {
         if (actionType == MouseActionType.SCROLL_UP) return -count;
         if (actionType == MouseActionType.SCROLL_DOWN) return count;
         return 0;
+    }
+
+    /** Returns signed horizontal wheel steps (left is negative), or zero for another action. */
+    public int getHorizontalScrollDelta() {
+        if (actionType == MouseActionType.SCROLL_LEFT) return -count;
+        if (actionType == MouseActionType.SCROLL_RIGHT) return count;
+        return 0;
+    }
+
+    private boolean sameModifiers(KeyStroke other) {
+        return isCtrlDown() == other.isCtrlDown() && isAltDown() == other.isAltDown()
+                && isShiftDown() == other.isShiftDown();
     }
 
     /**
@@ -165,28 +188,33 @@ public class MouseAction extends KeyStroke {
             return new CoalescedInput(first, null);
         }
 
-        int firstScroll = firstMouse.getScrollDelta();
+        boolean vertical = firstMouse.getScrollDelta() != 0;
+        int firstScroll = vertical ? firstMouse.getScrollDelta() : firstMouse.getHorizontalScrollDelta();
         if (firstScroll != 0) {
+            // Only wheel steps on the same axis with the same modifiers merge.
             long scroll = firstScroll;
             MouseAction latest = firstMouse;
             KeyStroke next = null;
             while ((next = pollNext.get()) != null) {
-                if (next instanceof MouseAction mouse && mouse.getScrollDelta() != 0) {
-                    scroll += mouse.getScrollDelta();
-                    latest = mouse;
-                }
-                else {
-                    break;
-                }
+                int delta = next instanceof MouseAction mouse && firstMouse.sameModifiers(mouse)
+                        ? (vertical ? mouse.getScrollDelta() : mouse.getHorizontalScrollDelta())
+                        : 0;
+                if (delta == 0) break;
+                scroll += delta;
+                latest = (MouseAction) next;
             }
             if (scroll == 0) return new CoalescedInput(null, next);
 
-            boolean up = scroll < 0;
+            boolean back = scroll < 0;
+            MouseActionType type = vertical
+                    ? (back ? MouseActionType.SCROLL_UP : MouseActionType.SCROLL_DOWN)
+                    : (back ? MouseActionType.SCROLL_LEFT : MouseActionType.SCROLL_RIGHT);
             MouseAction coalesced = new MouseAction(
-                    up ? MouseActionType.SCROLL_UP : MouseActionType.SCROLL_DOWN,
-                    up ? 4 : 5,
+                    type,
+                    vertical ? (back ? 4 : 5) : (back ? 6 : 7),
                     latest.getPosition(),
-                    Math.toIntExact(Math.abs(scroll)));
+                    Math.toIntExact(Math.abs(scroll)),
+                    firstMouse.isCtrlDown(), firstMouse.isAltDown(), firstMouse.isShiftDown());
             return new CoalescedInput(coalesced, next);
         }
 
@@ -204,7 +232,8 @@ public class MouseAction extends KeyStroke {
                 }
             }
             MouseAction coalesced = new MouseAction(
-                    MouseActionType.DRAG, latest.getButton(), latest.getPosition(), dragCount);
+                    MouseActionType.DRAG, latest.getButton(), latest.getPosition(), dragCount,
+                    latest.isCtrlDown(), latest.isAltDown(), latest.isShiftDown());
             return new CoalescedInput(coalesced, next);
         }
 
@@ -229,6 +258,7 @@ public class MouseAction extends KeyStroke {
 
     @Override
     public String toString() {
-        return "MouseAction{actionType=" + actionType + ", button=" + button + ", position=" + position + ", count=" + count + '}';
+        return "MouseAction{actionType=" + actionType + ", button=" + button + ", position=" + position + ", count=" + count
+                + (isCtrlDown() ? ", ctrl" : "") + (isAltDown() ? ", alt" : "") + (isShiftDown() ? ", shift" : "") + '}';
     }
 }

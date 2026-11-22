@@ -34,5 +34,13 @@ public enum MouseActionType {
      * Moving the mouse cursor on the screen without holding any buttons down
      */
     MOVE,
+    /**
+     * The wheel or the touchpad scrolls to the left (xterm button 6)
+     */
+    SCROLL_LEFT,
+    /**
+     * The wheel or the touchpad scrolls to the right (xterm button 7)
+     */
+    SCROLL_RIGHT,
     ;
 }

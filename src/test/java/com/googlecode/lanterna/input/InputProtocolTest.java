@@ -41,6 +41,66 @@ public class InputProtocolTest {
     }
 
     @Test
+    public void wheelKeepsItsAxisAndModifiers() {
+        MouseCharacterPattern pattern = new MouseCharacterPattern();
+
+        MouseAction left = matchMouse(pattern, "[<66;20;10M");
+        assertEquals(MouseActionType.SCROLL_LEFT, left.getActionType());
+        assertEquals(6, left.getButton());
+        assertEquals(0, left.getScrollDelta());
+        assertEquals(-1, left.getHorizontalScrollDelta());
+
+        MouseAction right = matchMouse(pattern, "[<67;20;10M");
+        assertEquals(MouseActionType.SCROLL_RIGHT, right.getActionType());
+        assertEquals(7, right.getButton());
+        assertEquals(1, right.getHorizontalScrollDelta());
+
+        MouseAction shifted = matchMouse(pattern, "[<69;20;10M");
+        assertEquals(MouseActionType.SCROLL_DOWN, shifted.getActionType());
+        assertTrue(shifted.isShiftDown());
+        assertFalse(shifted.isCtrlDown());
+
+        MouseAction ctrl = matchMouse(pattern, "[<80;20;10M");
+        assertEquals(MouseActionType.SCROLL_UP, ctrl.getActionType());
+        assertTrue(ctrl.isCtrlDown());
+
+        MouseAction altClick = matchMouse(pattern, "[<8;20;10M");
+        assertEquals(MouseActionType.CLICK_DOWN, altClick.getActionType());
+        assertEquals(1, altClick.getButton());
+        assertTrue(altClick.isAltDown());
+
+        MouseAction legacyLeft = matchMouse(new MouseCharacterPattern(), "[M" + (char) (32 + 66) + "!!");
+        assertEquals(MouseActionType.SCROLL_LEFT, legacyLeft.getActionType());
+        MouseAction legacyShiftUp = matchMouse(new MouseCharacterPattern(), "[M" + (char) (32 + 68) + "!!");
+        assertEquals(MouseActionType.SCROLL_UP, legacyShiftUp.getActionType());
+        assertTrue(legacyShiftUp.isShiftDown());
+    }
+
+    @Test
+    public void wheelCoalescingKeepsAxisAndModifiersApart() {
+        TerminalPosition at = TerminalPosition.TOP_LEFT_CORNER;
+        Queue<KeyStroke> mixed = new ArrayDeque<>(List.of(
+                new MouseAction(MouseActionType.SCROLL_DOWN, 5, at),
+                new MouseAction(MouseActionType.SCROLL_DOWN, 5, at),
+                new MouseAction(MouseActionType.SCROLL_DOWN, 5, at, 1, false, false, true),
+                new MouseAction(MouseActionType.SCROLL_RIGHT, 7, at),
+                new MouseAction(MouseActionType.SCROLL_RIGHT, 7, at)));
+        InputCoalescer input = new InputCoalescer();
+        MouseAction plain = (MouseAction) input.next(mixed::poll, mixed::poll);
+        assertEquals(MouseActionType.SCROLL_DOWN, plain.getActionType());
+        assertEquals(2, plain.getCount());
+        assertFalse(plain.isShiftDown());
+        MouseAction shifted = (MouseAction) input.next(mixed::poll, mixed::poll);
+        assertEquals(MouseActionType.SCROLL_DOWN, shifted.getActionType());
+        assertTrue(shifted.isShiftDown());
+        assertEquals(1, shifted.getCount());
+        MouseAction sideways = (MouseAction) input.next(mixed::poll, mixed::poll);
+        assertEquals(MouseActionType.SCROLL_RIGHT, sideways.getActionType());
+        assertEquals(2, sideways.getCount());
+        assertEquals(7, sideways.getButton());
+    }
+
+    @Test
     public void defaultProfileOwnsTerminalControlKeysAndBracketedPasteMarkers() throws Exception {
         assertKey("\n", KeyType.Enter, false, false, false);
         assertKey("\r", KeyType.Enter, false, false, false);

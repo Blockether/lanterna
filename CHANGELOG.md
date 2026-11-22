@@ -11,6 +11,16 @@
 > and a complete HTML terminal backend. It remains a drop-in replacement for
 > `com.googlecode.lanterna:lanterna:3.1.5` and adds focused public packages.
 
+### `3.1.5-vis.65`
+
+- A horizontal wheel or touchpad step is `SCROLL_LEFT` (button 6) or `SCROLL_RIGHT`
+  (button 7). Before, xterm buttons 6 and 7 gave `SCROLL_DOWN`, so a sideways swipe
+  scrolled down. `MouseAction.getHorizontalScrollDelta()` gives the signed steps.
+- A mouse event keeps the Shift, Alt and Ctrl keys that the terminal reports with it, in
+  the SGR and the legacy protocols. `isShiftDown()`, `isAltDown()` and `isCtrlDown()` of a
+  `MouseAction` give them. A new `MouseAction` constructor takes the three modifiers.
+- Coalescing merges wheel steps only on the same axis and with the same modifiers.
+
 ### `3.1.5-vis.64`
 
 - A terminal reply that comes in parts is never typed text. `InputDecoder` waits for the
